@@ -48,6 +48,16 @@
         <button id="startMicBtn">Start Mic</button>
         <button id="stopMicBtn" disabled>Stop Mic</button>
         <button id="tagBtn">Tag</button>
+        <label class="small" style="display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #2b3c67; border-radius:10px; background:#0f1730;">
+          Rate
+          <select id="rateSel" class="mono" style="background:#0f1730; color:#e9eef6; border:1px solid #2b3c67; border-radius:8px; padding:4px 6px;">
+            <option value="10">10 Hz</option>
+            <option value="20" selected>20 Hz</option>
+            <option value="50">50 Hz</option>
+            <option value="60">60 Hz</option>
+            <option value="raw">raw</option>
+          </select>
+        </label>
       </div>
       <div class="row">
         <div class="stat"><div class="small">Samples</div><div class="mono" id="samples">0</div></div>
@@ -80,6 +90,7 @@
   const micEl = document.getElementById('mic');
   const tagsEl = document.getElementById('tags');
   const logEl = document.getElementById('log');
+  const rateSel = document.getElementById('rateSel');
 
   let recording = false;
   let watchId = null;
@@ -96,6 +107,10 @@
   // Tagging
   let tags = [];
   let lastTag = null; // attached to next sample then cleared
+
+  // Sampling throttle
+  let minIntervalMs = 50; // default 20 Hz
+  let lastWriteTs = 0; // attached to next sample then cleared
 
   const log = (msg, cls='') => {
     const line = document.createElement('div');
@@ -144,6 +159,7 @@
     if (recording) return;
     data = [];
     sampleId = 0;
+    lastWriteTs = 0;
     recording = true;
     startBtn.disabled = true;
     stopBtn.disabled = false;
@@ -163,7 +179,10 @@
 
     motionHandler = (ev) => {
       if (!recording) return;
-      const t = Date.now();
+      const now = Date.now();
+      if (minIntervalMs && (now - lastWriteTs) < minIntervalMs) return; // throttle
+      lastWriteTs = now;
+      const t = now;
       const aIncG = ev.accelerationIncludingGravity || {};
       const a = ev.acceleration || {};
       const r = ev.rotationRate || {};
@@ -351,7 +370,7 @@
       const ok = csv.includes('"line1\nline2"');
       log('[test] CSV quoting newlines', ok ? 'ok' : 'err');
     })();
-  } 
+  }
 
   // Wire up UI
   permBtn.addEventListener('click', requestPermissions);
@@ -361,6 +380,11 @@
   document.getElementById('startMicBtn').addEventListener('click', startMic);
   document.getElementById('stopMicBtn').addEventListener('click', stopMic);
   document.getElementById('tagBtn').addEventListener('click', addTag);
+  rateSel.addEventListener('change', () => {
+    const v = rateSel.value;
+    if (v === 'raw') { minIntervalMs = 0; log('Sampling rate: raw (no throttle)', 'ok'); }
+    else { const hz = parseFloat(v); minIntervalMs = Math.max(0, Math.round(1000 / hz)); log(`Sampling rate: ${hz} Hz (~${minIntervalMs} ms)`, 'ok'); }
+  });
 
   // Hints
   if (!hasMotionSupport()) log('This browser does not support DeviceMotion API. Try a modern mobile browser.', 'err');
