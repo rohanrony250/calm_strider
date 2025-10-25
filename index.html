@@ -8,19 +8,20 @@
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; background:#0b1320; color:#e9eef6; }
     header { padding: 16px 20px; background: #111a2e; box-shadow: 0 2px 10px rgba(0,0,0,.2); position: sticky; top: 0; z-index: 10; }
     h1 { margin: 0; font-size: 18px; letter-spacing:.3px; }
-    main { padding: 20px; max-width: 900px; margin: 0 auto; }
+    main { padding: 20px; max-width: 980px; margin: 0 auto; }
     .card { background:#121a33; border:1px solid #1f2a4a; border-radius: 16px; padding: 16px; margin-bottom: 16px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
     .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
-    button { appearance:none; border:1px solid #2b3c67; background:#1a2550; color:#e9eef6; padding: 10px 14px; border-radius: 12px; cursor:pointer; font-weight:600; }
+    button, select, input[type="number"] { appearance:none; border:1px solid #2b3c67; background:#1a2550; color:#e9eef6; padding: 10px 14px; border-radius: 12px; font-weight:600; }
+    button { cursor:pointer; }
     button[disabled] { opacity:.6; cursor:not-allowed; }
     .stat { min-width: 140px; background:#0f1730; border:1px solid #1f2a4a; padding:10px 12px; border-radius:12px; text-align:left; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .small { font-size: 12px; opacity:.8; }
-    a.link { color:#8cc8ff; text-decoration: none; border-bottom: 1px dashed #8cc8ff; }
-    .log { max-height: 220px; overflow: auto; background:#0f1730; border:1px solid #1f2a4a; padding:10px; border-radius: 12px; }
+    .log { max-height: 240px; overflow: auto; background:#0f1730; border:1px solid #1f2a4a; padding:10px; border-radius: 12px; }
     .ok { color:#6df0a8 }
     .warn { color:#ffd580 }
     .err { color:#ff8797 }
+    label.l { display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #2b3c67; border-radius:10px; background:#0f1730; }
   </style>
 </head>
 <body>
@@ -29,13 +30,7 @@
   </header>
   <main>
     <div class="card">
-      <p>Use this on your phone to record accelerometer, GPS, and optional microphone <em>loudness</em> (no audio saved). It runs entirely in the browser and saves a CSV locally (no server needed).</p>
-      <ol>
-        <li>Tap <strong>Request Permissions</strong> (iOS requires this for motion/location; mic is optional).</li>
-        <li>Tap <strong>Start</strong>. Optionally tap <strong>Start Mic</strong> to log dB (relative dBFS).</li>
-        <li>Walk/ride, optionally use <strong>Tag</strong> to mark events.</li>
-        <li>Tap <strong>Stop</strong> → <strong>Stop Mic</strong> (if used) → <strong>Download CSV</strong>.</li>
-      </ol>
+      <p>Record accelerometer, GPS and optional microphone <em>loudness</em> (no audio saved). Exports a CSV locally—no server needed.</p>
       <p class="small">Columns: timestamp_iso, timestamp_ms, lat, lon, accuracy_m, altitude_m, speed_mps, heading_deg, ax, ay, az, a_total, rot_alpha_dps, rot_beta_dps, rot_gamma_dps, <strong>dbfs, db_smooth, mic_active, tag</strong>, sample_id</p>
     </div>
 
@@ -48,9 +43,18 @@
         <button id="startMicBtn">Start Mic</button>
         <button id="stopMicBtn" disabled>Stop Mic</button>
         <button id="tagBtn">Tag</button>
-        <label class="small" style="display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #2b3c67; border-radius:10px; background:#0f1730;">
-          Rate
-          <select id="rateSel" class="mono" style="background:#0f1730; color:#e9eef6; border:1px solid #2b3c67; border-radius:8px; padding:4px 6px;">
+        <label class="l small">Mode
+          <select id="modeSel" class="mono">
+            <option value="throttle" selected>Event-throttle</option>
+            <option value="timer">Fixed-interval</option>
+          </select>
+        </label>
+        <label class="l small">Rate
+          <select id="rateSel" class="mono">
+            <option value="0.5">0.5 Hz</option>
+            <option value="1">1 Hz</option>
+            <option value="2">2 Hz</option>
+            <option value="5">5 Hz</option>
             <option value="10">10 Hz</option>
             <option value="20" selected>20 Hz</option>
             <option value="50">50 Hz</option>
@@ -91,12 +95,16 @@
   const tagsEl = document.getElementById('tags');
   const logEl = document.getElementById('log');
   const rateSel = document.getElementById('rateSel');
+  const modeSel = document.getElementById('modeSel');
 
   let recording = false;
   let watchId = null;
   let latestGeo = null;
   let data = [];
   let sampleId = 0;
+
+  // motion snapshot (used by timer mode)
+  let lastAx = null, lastAy = null, lastAz = null, lastAmag = null;
   let motionHandler = null;
 
   // Audio (mic) state
@@ -108,9 +116,12 @@
   let tags = [];
   let lastTag = null; // attached to next sample then cleared
 
-  // Sampling throttle
-  let minIntervalMs = 50; // default 20 Hz
-  let lastWriteTs = 0; // attached to next sample then cleared
+  // Sampling control
+  let writeMode = 'throttle'; // 'throttle' | 'timer'
+  let minIntervalMs = 50;     // throttle interval (derived from rate)
+  let timerId = null;         // setInterval id for timer mode
+  let intervalMs = 50;        // timer interval (derived from rate)
+  let lastWriteTs = 0;        // last time we wrote a row (throttle)
 
   const log = (msg, cls='') => {
     const line = document.createElement('div');
@@ -120,13 +131,8 @@
     logEl.scrollTop = logEl.scrollHeight;
   };
 
-  function hasMotionSupport(){
-    return 'DeviceMotionEvent' in window;
-  }
-
-  function hasGeoSupport(){
-    return 'geolocation' in navigator;
-  }
+  function hasMotionSupport(){ return 'DeviceMotionEvent' in window; }
+  function hasGeoSupport(){ return 'geolocation' in navigator; }
 
   async function requestPermissions(){
     try {
@@ -155,6 +161,52 @@
     }
   }
 
+  // --- CSV builder (tested) ---
+  function buildCSV(headers, rows){
+    const esc = (v) => {
+      if (v == null) return '';
+      const s = String(v);
+      const needsQuotes = /[",\n\r]/.test(s);
+      const q = s.replace(/"/g, '""');
+      return needsQuotes ? '"' + q + '"' : q;
+    };
+    let out = headers.join(',') + '\n';
+    for (const row of rows){ out += headers.map(h => esc(row[h])).join(',') + '\n'; }
+    return out;
+  }
+
+  function makeRow(now){
+    const g = latestGeo ? latestGeo.coords : {};
+    const r = { alpha: null, beta: null, gamma: null }; // rotation rate shown via motion event only (not stored separately here)
+    return {
+      timestamp_iso: new Date(now).toISOString(),
+      timestamp_ms: now,
+      lat: g.latitude ?? null,
+      lon: g.longitude ?? null,
+      accuracy_m: g.accuracy ?? null,
+      altitude_m: g.altitude ?? null,
+      speed_mps: g.speed ?? null,
+      heading_deg: g.heading ?? null,
+      ax: lastAx, ay: lastAy, az: lastAz,
+      a_total: lastAmag,
+      rot_alpha_dps: r.alpha ?? null,
+      rot_beta_dps: r.beta ?? null,
+      rot_gamma_dps: r.gamma ?? null,
+      dbfs: lastDbfs,
+      db_smooth: lastDbSmooth,
+      mic_active: micActive ? 1 : 0,
+      tag: lastTag,
+      sample_id: sampleId++
+    };
+  }
+
+  function pushRow(now){
+    const row = makeRow(now);
+    data.push(row);
+    samplesEl.textContent = String(data.length);
+    if (lastTag) lastTag = null; // consume
+  }
+
   function start(){
     if (recording) return;
     data = [];
@@ -166,65 +218,44 @@
     downloadBtn.disabled = true;
     log('Recording started', 'ok');
 
+    // GPS
     if (hasGeoSupport()) {
       watchId = navigator.geolocation.watchPosition((pos) => {
         latestGeo = pos;
         const s = pos.coords.speed; // m/s (may be null)
-        gpsEl.textContent = `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)} ±${(pos.coords.accuracy||0).toFixed(0)}m`;
+        gpsEl.textContent = `${pos.coords.latitude?.toFixed?.(5) ?? '—'}, ${pos.coords.longitude?.toFixed?.(5) ?? '—'} ±${(pos.coords.accuracy||0).toFixed(0)}m`;
         speedEl.textContent = (s!=null? s.toFixed(2): '—');
       }, (err) => {
         log('GPS error: ' + err.message, 'warn');
       }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 });
     }
 
+    // Motion
     motionHandler = (ev) => {
-      if (!recording) return;
-      const now = Date.now();
-      if (minIntervalMs && (now - lastWriteTs) < minIntervalMs) return; // throttle
-      lastWriteTs = now;
-      const t = now;
-      const aIncG = ev.accelerationIncludingGravity || {};
-      const a = ev.acceleration || {};
-      const r = ev.rotationRate || {};
-      // Prefer includingGravity for |a| (more stable in pocket/bag)
-      const ax = (aIncG.x ?? a.x ?? null), ay = (aIncG.y ?? a.y ?? null), az = (aIncG.z ?? a.z ?? null);
-      const amag = (ax!=null && ay!=null && az!=null) ? Math.sqrt(ax*ax + ay*ay + az*az) : null;
+      const aIncG = ev.accelerationIncludingGravity || ev.acceleration || {};
+      lastAx = aIncG.x ?? null; lastAy = aIncG.y ?? null; lastAz = aIncG.z ?? null;
+      lastAmag = (lastAx!=null && lastAy!=null && lastAz!=null) ? Math.sqrt(lastAx*lastAx + lastAy*lastAy + lastAz*lastAz) : null;
+      amagEl.textContent = (lastAmag!=null) ? lastAmag.toFixed(2) : '—';
 
-      if (amag!=null) amagEl.textContent = amag.toFixed(2); else amagEl.textContent = '—';
-      if (lastDbSmooth!=null) dbEl.textContent = lastDbSmooth.toFixed(1);
-
-      const g = latestGeo ? latestGeo.coords : {};
-      const row = {
-        timestamp_iso: new Date(t).toISOString(),
-        timestamp_ms: t,
-        lat: g.latitude ?? null,
-        lon: g.longitude ?? null,
-        accuracy_m: g.accuracy ?? null,
-        altitude_m: g.altitude ?? null,
-        speed_mps: g.speed ?? null,
-        heading_deg: g.heading ?? null,
-        ax, ay, az,
-        a_total: amag,
-        rot_alpha_dps: r.alpha ?? null,
-        rot_beta_dps: r.beta ?? null,
-        rot_gamma_dps: r.gamma ?? null,
-        dbfs: lastDbfs,
-        db_smooth: lastDbSmooth,
-        mic_active: micActive ? 1 : 0,
-        tag: lastTag,
-        sample_id: sampleId++
-      };
-      data.push(row);
-      samplesEl.textContent = String(data.length);
-      // consume one-shot tag after attaching to a row
-      if (lastTag) lastTag = null;
+      if (writeMode === 'throttle'){
+        const now = Date.now();
+        if (minIntervalMs && (now - lastWriteTs) < minIntervalMs) return;
+        lastWriteTs = now;
+        pushRow(now);
+      }
     };
-
     window.addEventListener('devicemotion', motionHandler, { passive: true });
 
-    // Fallback: if no motion events after 5s, warn.
+    // Timer mode
+    if (writeMode === 'timer'){
+      if (timerId) clearInterval(timerId);
+      timerId = setInterval(() => { pushRow(Date.now()); }, intervalMs);
+      log(`Fixed-interval mode @ ${Math.round(1000/intervalMs)} Hz`, 'ok');
+    }
+
+    // Warn if no samples
     setTimeout(() => {
-      if (recording && data.length === 0) log('No motion samples yet. On iOS, tap "Request Permissions" and move the phone slightly.', 'warn');
+      if (recording && data.length === 0) log('No samples yet. On iOS, tap "Request Permissions" and move the phone slightly.', 'warn');
     }, 5000);
   }
 
@@ -237,24 +268,9 @@
 
     if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
     if (motionHandler) { window.removeEventListener('devicemotion', motionHandler); motionHandler = null; }
+    if (timerId) { clearInterval(timerId); timerId = null; }
 
     log(`Recording stopped. ${data.length} samples captured.`, 'ok');
-  }
-
-  // --- CSV builder (refactored for testability) ---
-  function buildCSV(headers, rows){
-    const esc = (v) => {
-      if (v == null) return '';
-      const s = String(v);
-      const needsQuotes = /[",\n\r]/.test(s);
-      const q = s.replace(/"/g, '""');
-      return needsQuotes ? '"' + q + '"' : q;
-    };
-    let out = headers.join(',') + '\n';
-    for (const row of rows){
-      out += headers.map(h => esc(row[h])).join(',') + '\n';
-    }
-    return out;
   }
 
   function downloadCSV(){
@@ -283,8 +299,7 @@
     try{
       if (micActive) return;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        log('Mic not supported on this browser.', 'err');
-        return;
+        log('Mic not supported on this browser.', 'err'); return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       micStream = stream;
@@ -313,9 +328,7 @@
       };
       update();
       log('Mic started (dBFS, relative; no audio stored).', 'ok');
-    }catch(e){
-      log('Mic error: ' + e.message, 'err');
-    }
+    }catch(e){ log('Mic error: ' + e.message, 'err'); }
   }
   function stopMic(){
     if (!micActive) return;
@@ -323,56 +336,44 @@
     if (micRaf) cancelAnimationFrame(micRaf), micRaf = null;
     if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
     if (audioCtx) { audioCtx.close(); audioCtx=null; }
-    analyser=null; lastDbfs=null; // keep lastDbSmooth visible to show last value
+    analyser=null; lastDbfs=null; // keep lastDbSmooth visible
     document.getElementById('startMicBtn').disabled = false;
     document.getElementById('stopMicBtn').disabled = true;
     micEl.textContent = 'off';
     log('Mic stopped', 'ok');
   }
 
-  // Tag helper: attaches label to the next sample row
+  // Tag helper
   function addTag(){
     const label = prompt('Tag label (e.g., obstruction, ramp, noise, note:...)');
     if (!label) return;
-    const t = Date.now();
-    tags.push({ ts: t, label });
-    lastTag = label; // attach to next motion sample
+    tags.push({ ts: Date.now(), label });
+    lastTag = label; // attach to next sample
     tagsEl.textContent = String(tags.length);
     log('Tagged: ' + label, 'ok');
   }
 
   // --- Self-tests (basic) ---
   function runSelfTests(){
-    // 1) CSV newline bug should be fixed
     (function(){
-      const H = ['a','b'];
-      const R = [{a:1,b:2}];
-      const csv = buildCSV(H,R);
-      const lines = csv.split('\n');
+      const H = ['a','b']; const R = [{a:1,b:2}];
+      const csv = buildCSV(H,R); const lines = csv.split('\n');
       const ok = lines.length >= 2 && lines[0] === 'a,b' && lines[1].startsWith('1,2');
       log('[test] CSV newline construction', ok ? 'ok' : 'err');
     })();
-
-    // 2) Quoting with commas and quotes
     (function(){
-      const H = ['x'];
-      const R = [{x:'he said, "hi"'}];
-      const csv = buildCSV(H,R);
-      const ok = csv.includes('"he said, ""hi"""');
+      const H = ['x']; const R = [{x:'he said, "hi"'}];
+      const csv = buildCSV(H,R); const ok = csv.includes('"he said, ""hi"""');
       log('[test] CSV quoting commas/quotes', ok ? 'ok' : 'err');
     })();
-
-    // 3) Quoting with newlines
     (function(){
-      const H = ['y'];
-      const R = [{y:'line1\nline2'}];
-      const csv = buildCSV(H,R);
-      const ok = csv.includes('"line1\nline2"');
+      const H = ['y']; const R = [{y:'line1\nline2'}];
+      const csv = buildCSV(H,R); const ok = csv.includes('"line1\nline2"');
       log('[test] CSV quoting newlines', ok ? 'ok' : 'err');
     })();
   }
 
-  // Wire up UI
+  // UI wiring
   permBtn.addEventListener('click', requestPermissions);
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', stop);
@@ -380,17 +381,30 @@
   document.getElementById('startMicBtn').addEventListener('click', startMic);
   document.getElementById('stopMicBtn').addEventListener('click', stopMic);
   document.getElementById('tagBtn').addEventListener('click', addTag);
-  rateSel.addEventListener('change', () => {
-    const v = rateSel.value;
-    if (v === 'raw') { minIntervalMs = 0; log('Sampling rate: raw (no throttle)', 'ok'); }
-    else { const hz = parseFloat(v); minIntervalMs = Math.max(0, Math.round(1000 / hz)); log(`Sampling rate: ${hz} Hz (~${minIntervalMs} ms)`, 'ok'); }
+  modeSel.addEventListener('change', () => {
+    writeMode = modeSel.value; // 'throttle' | 'timer'
+    const v = rateSel.value; // recompute intervals on mode switch
+    applyRate(v);
+    log(`Mode set to: ${writeMode}`, 'ok');
   });
+  rateSel.addEventListener('change', () => applyRate(rateSel.value));
 
-  // Hints
+  function applyRate(v){
+    if (v === 'raw'){
+      minIntervalMs = 0; intervalMs = 0; log('Rate: raw (no throttle)', 'ok'); return;
+    }
+    const hz = parseFloat(v);
+    const ms = Math.max(1, Math.round(1000 / hz));
+    if (writeMode === 'throttle') { minIntervalMs = ms; log(`Throttle: ~${hz} Hz (${ms} ms)`, 'ok'); }
+    else { intervalMs = ms; if (timerId){ clearInterval(timerId); timerId = setInterval(()=>{ if(recording) pushRow(Date.now()); }, intervalMs);} log(`Fixed-interval: ${hz} Hz (${ms} ms)`, 'ok'); }
+  }
+
+  // Initial rate apply
+  applyRate(rateSel.value);
+
   if (!hasMotionSupport()) log('This browser does not support DeviceMotion API. Try a modern mobile browser.', 'err');
   if (!hasGeoSupport()) log('Geolocation not available.', 'warn');
 
-  // Run basic self-tests once
   runSelfTests();
 })();
 </script>
