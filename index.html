@@ -27,9 +27,8 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import { getDatabase, ref, push, update, set } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
-  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-  // --- 1) Your Firebase project config (from Firebase Console)
+  // 1) Paste your Web config from Project settings → General → Your apps (Web)
   const firebaseConfig = {
     apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
     authDomain: "urban-app-be1f9.firebaseapp.com",
@@ -38,16 +37,11 @@
     appId: "1:297008657169:web:e9a9aadf8332b71a6392b0"
   };
 
-  // --- 2) Init + anonymous auth
+  // 2) Init
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
-  const auth = getAuth(app);
-  signInAnonymously(auth).catch(console.error);
 
-  let uid = null;
-  onAuthStateChanged(auth, (u) => { uid = u?.uid || null; console.log("Firebase uid:", uid); });
-
-  // --- 3) Lightweight batch uploader (1s or 50 rows)
+  // 3) Tiny batch uploader (NO AUTH; writes to /public/…)
   let sessionId = null;
   let buffer = [];
   let flushTimer = null;
@@ -55,66 +49,52 @@
   const FLUSH_MS = 1000;
 
   function startSession(meta) {
-    if (!uid) console.warn("No uid yet (will still buffer)"); 
     sessionId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
-    // session metadata
-    set(ref(db, `users/${uid}/sessions/${sessionId}/meta`), { ...meta, startedAt: Date.now(), sdk: "web-rtdb" }).catch(()=>{});
+    set(ref(db, `public/sessions/${sessionId}/meta`), { ...meta, startedAt: Date.now(), sdk: "web-rtdb-noauth" }).catch(()=>{});
     if (flushTimer) clearInterval(flushTimer);
     flushTimer = setInterval(flushBuffer, FLUSH_MS);
+    window.log?.(`[cloud] session: public/sessions/${sessionId}`, 'ok');
   }
 
   async function flushBuffer() {
-    if (!uid || !sessionId || buffer.length === 0) return;
+    if (!sessionId || buffer.length === 0) return;
     const updates = {};
     for (const row of buffer) {
-      const key = push(ref(db, `users/${uid}/sessions/${sessionId}/readings`)).key;
-      updates[`users/${uid}/sessions/${sessionId}/readings/${key}`] = row;
+      const key = push(ref(db, `public/sessions/${sessionId}/readings`)).key;
+      updates[`public/sessions/${sessionId}/readings/${key}`] = row;
     }
     buffer = [];
-    try { await update(ref(db), updates); } catch (e) { console.error("upload error", e); }
+    try { await update(ref(db), updates); }
+    catch (e) { console.error(e); window.log?.(`[cloud] upload error: ${e.message}`, 'err'); }
   }
 
-  function stopSession() {
-    if (flushTimer) clearInterval(flushTimer), flushTimer = null;
-    flushBuffer();
-  }
+  function stopSession(){ if (flushTimer) clearInterval(flushTimer), flushTimer=null; flushBuffer(); }
+  function onSample(row){ buffer.push(row); if (buffer.length >= BUFFER_MAX) flushBuffer(); }
 
-  function onSample(row) {
-    if (!uid || !sessionId) { buffer.push(row); return; }
-    buffer.push(row);
-    if (buffer.length >= BUFFER_MAX) flushBuffer();
-  }
-
-  // Expose to your existing script:
+  // Expose to your existing logger (no other changes needed)
   window.firebaseUpload = { startSession, onSample, stopSession };
 
-  // --- 4) (Optional) Open data: weather → Firebase every 60s while logging
+  // 4) (Optional) Open data: weather → /open/weather/{tile}/{ts}
   let weatherTimer = null;
-  function tile(lat, lon, step=0.01) { const r=v => (Math.round(v/step)*step).toFixed(2); return `${r(lat)}_${r(lon)}`; }
-
-  async function writeWeather(lat, lon) {
+  function tile(lat, lon, step=0.01){ const r=v => (Math.round(v/step)*step).toFixed(2); return `${r(lat)}_${r(lon)}`; }
+  async function writeWeather(lat, lon){
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation`;
       const j = await fetch(url).then(r=>r.json());
-      const t = Date.now(); const til = tile(lat, lon);
-      await set(ref(db, `open/weather/${til}/${t}`), {
-        lat, lon, current: j.current || j.current_weather, fetched_at: t, source: "open-meteo"
-      });
-    } catch (e) { console.error("weather ingest", e); }
+      const t = Date.now(), til = tile(lat, lon);
+      await set(ref(db, `open/weather/${til}/${t}`), { lat, lon, current: j.current || j.current_weather, fetched_at: t, source: "open-meteo" });
+    } catch(e){ console.error("weather ingest", e); }
   }
-
-  function startWeatherIngest(getLatLonFn) {
+  function startWeatherIngest(getLatLonFn){
     if (weatherTimer) clearInterval(weatherTimer);
-    const tick = async () => {
-      const p = getLatLonFn?.();
-      if (p && p.lat != null && p.lon != null) await writeWeather(p.lat, p.lon);
-    };
+    const tick = async () => { const c = getLatLonFn?.(); if (c) await writeWeather(c.lat, c.lon); };
     tick(); weatherTimer = setInterval(tick, 60_000);
   }
   function stopWeatherIngest(){ if (weatherTimer) clearInterval(weatherTimer), weatherTimer=null; }
 
   window.weatherIngest = { startWeatherIngest, stopWeatherIngest };
 </script>
+
 
 <body>
   <header>
