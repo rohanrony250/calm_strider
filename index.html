@@ -25,7 +25,7 @@
   </style>
 </head>
 
-<!-- Firebase module: NO AUTH, writes to /public/... + weather cache -->
+<!-- Firebase module: NO AUTH, writes to /public/... ; weather is cached and merged into each reading -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import { getDatabase, ref, push, update, set } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
@@ -93,39 +93,27 @@
 
   window.firebaseUpload = { startSession, onSample, stopSession };
 
-  // ---- Weather ingest → /open/weather + cache latest for rows ----
+  // ---- Weather ingest: cache latest for rows (no DB writes) ----
   let weatherTimer = null;
-  let lastWeather = null; // cached snapshot
+  window.__lastWeather = null;
 
-  function tile(lat, lon, step = 0.01) {
-    const idx = v => Math.round(v / step);   // integer index, no decimals
-    return `${idx(lat)}_${idx(lon)}`;        // e.g. "5325_-614" (RTDB-safe)
-  }
-
-  async function writeWeather(lat, lon){
+  async function fetchWeather(lat, lon){
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation`;
       const j = await fetch(url).then(r=>r.json());
       const cur = j.current || j.current_weather || {};
-
-      const t = Date.now();
-      lastWeather = {
-        ts: t,
+      window.__lastWeather = {
+        ts: Date.now(),
         source: "open-meteo",
-        temp_c: cur.temperature_2m ?? cur.temperature ?? null,
+        temp_c:   cur.temperature_2m ?? cur.temperature ?? null,
         wind_mps: cur.wind_speed_10m ?? (typeof cur.windspeed === "number" ? cur.windspeed/3.6 : null),
         precip_mm: cur.precipitation ?? null
       };
-      window.__lastWeather = lastWeather; // expose to logger
-
-      const til = tile(lat, lon);
-      await set(ref(db, `open/weather/${til}/${t}`), { lat, lon, current: lastWeather, fetched_at: t });
-
-      console.log(`[cloud] weather write @ ${til}/${t}`, lastWeather);
-      window.log?.(`[cloud] weather @ ${til}`, 'ok');
-    } catch(e){
-      console.error("[cloud] weather ingest", e);
-      window.log?.(`[cloud] weather error: ${e.message}`, 'err');
+      console.log("[cloud] weather updated", window.__lastWeather);
+      window.log?.(`[cloud] weather updated: ${window.__lastWeather.temp_c ?? "—"}°C`, "ok");
+    } catch (e) {
+      console.error("[cloud] weather error:", e);
+      window.log?.(`[cloud] weather error: ${e.message}`, "err");
     }
   }
 
@@ -133,14 +121,14 @@
     if (weatherTimer) clearInterval(weatherTimer);
     const tick = async () => {
       const p = getLatLonFn?.();
-      if (p && p.lat != null && p.lon != null) await writeWeather(p.lat, p.lon);
+      if (p && p.lat != null && p.lon != null) await fetchWeather(p.lat, p.lon);
     };
     tick();                                  // fetch immediately
     weatherTimer = setInterval(tick, 60_000);// then every 60s
     console.log("[cloud] weather ingest started");
   }
   function stopWeatherIngest(){ if (weatherTimer) clearInterval(weatherTimer), weatherTimer=null; console.log("[cloud] weather ingest stopped"); }
-  function fetchNow(lat, lon){ return writeWeather(lat, lon); }
+  function fetchNow(lat, lon){ return fetchWeather(lat, lon); }
 
   window.weatherIngest = { startWeatherIngest, stopWeatherIngest, fetchNow };
   console.log("[cloud] uploader ready (no-auth)");
@@ -153,7 +141,7 @@
   <main>
     <div class="card">
       <p>Record accelerometer, GPS and optional microphone <em>loudness</em> (no audio saved). Exports a CSV locally—no server needed.</p>
-      <p class="small">Columns: timestamp_iso, timestamp_ms, lat, lon, accuracy_m, altitude_m, speed_mps, heading_deg, ax, ay, az, a_total, rot_alpha_dps, rot_beta_dps, rot_gamma_dps, <strong>dbfs, db_smooth, mic_active, tag</strong>, sample_id, <strong>w_temp_c, w_wind_mps, w_precip_mm, w_ts, w_source</strong></p>
+      <p class="small">Columns include weather fields: <strong>w_temp_c, w_wind_mps, w_precip_mm, w_ts, w_source</strong></p>
     </div>
 
     <div class="card">
@@ -251,7 +239,7 @@
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
   };
-  window.log = log; // let the Firebase module write into our Status box
+  window.log = log; // allow Firebase module to log here
 
   function hasMotionSupport(){ return 'DeviceMotionEvent' in window; }
   function hasGeoSupport(){ return 'geolocation' in navigator; }
@@ -295,7 +283,7 @@
 
   function makeRow(now){
     const g = latestGeo ? latestGeo.coords : {};
-    const w = window.__lastWeather || null;  // <-- latest weather snapshot
+    const w = window.__lastWeather || null;  // latest weather snapshot
     const r = { alpha: null, beta: null, gamma: null };
     return {
       timestamp_iso: new Date(now).toISOString(),
@@ -317,7 +305,7 @@
       tag: lastTag,
       sample_id: sampleId++,
 
-      // --- Weather at sample time ---
+      // --- WEATHER COLUMNS (embedded) ---
       w_temp_c:    w?.temp_c ?? null,
       w_wind_mps:  w?.wind_mps ?? null,
       w_precip_mm: w?.precip_mm ?? null,
@@ -360,7 +348,7 @@
         gpsEl.textContent = `${pos.coords.latitude?.toFixed?.(5) ?? '—'}, ${pos.coords.longitude?.toFixed?.(5) ?? '—'} ±${(pos.coords.accuracy||0).toFixed(0)}m`;
         speedEl.textContent = (s!=null? s.toFixed(2): '—');
 
-        // kick weather immediately on first/each fix
+        // fetch weather immediately on each GPS fix
         window.weatherIngest?.fetchNow(pos.coords.latitude, pos.coords.longitude);
       }, (err) => {
         log('GPS error: ' + err.message, 'warn');
@@ -399,8 +387,8 @@
     if (!recording) return;
     recording = false;
 
-    window.firebaseUpload?.stopSession();          // end cloud session
-    window.weatherIngest?.stopWeatherIngest?.();   // stop weather
+    window.firebaseUpload?.stopSession();
+    window.weatherIngest?.stopWeatherIngest?.();
 
     startBtn.disabled = false;
     stopBtn.disabled = true;
@@ -419,7 +407,7 @@
       'timestamp_iso','timestamp_ms','lat','lon','accuracy_m','altitude_m','speed_mps','heading_deg',
       'ax','ay','az','a_total','rot_alpha_dps','rot_beta_dps','rot_gamma_dps',
       'dbfs','db_smooth','mic_active','tag','sample_id',
-      // weather fields:
+      // weather columns:
       'w_temp_c','w_wind_mps','w_precip_mm','w_ts','w_source'
     ];
     const csv = buildCSV(headers, data);
@@ -485,7 +473,6 @@
     log('Mic stopped', 'ok');
   }
 
-  // Tag helper
   function addTag(){
     const label = prompt('Tag label (e.g., obstruction, ramp, noise, note:...)');
     if (!label) return;
@@ -495,14 +482,12 @@
     log('Tagged: ' + label, 'ok');
   }
 
-  // Tests
   function runSelfTests(){
     (function(){ const H=['a','b']; const R=[{a:1,b:2}]; const csv=buildCSV(H,R); const lines=csv.split('\n'); const ok=lines.length>=2&&lines[0]==='a,b'&&lines[1].startsWith('1,2'); log('[test] CSV newline construction', ok?'ok':'err'); })();
     (function(){ const H=['x']; const R=[{x:'he said, "hi"'}]; const csv=buildCSV(H,R); const ok=csv.includes('"he said, ""hi"""'); log('[test] CSV quoting commas/quotes', ok?'ok':'err'); })();
     (function(){ const H=['y']; const R=[{y:'line1\nline2'}]; const csv=buildCSV(H,R); const ok=csv.includes('"line1\nline2"'); log('[test] CSV quoting newlines', ok?'ok':'err'); })();
   }
 
-  // UI
   permBtn.addEventListener('click', requestPermissions);
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', stop);
