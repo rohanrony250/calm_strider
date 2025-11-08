@@ -24,6 +24,96 @@
     label.l { display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #2b3c67; border-radius:10px; background:#0f1730; }
   </style>
 </head>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+  import { getDatabase, ref, push, update, set } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+
+  
+var admin = require("firebase-admin");
+
+var serviceAccount = require("urban-app-be1f9-firebase-adminsdk-fbsvc-21c8e499fe.json");
+
+
+
+  // --- 2) Init + anonymous auth
+  const app = admin.initializeApp({credential: admin.credential.cert(serviceAccount), databaseURL: "https://urban-app-be1f9-default-rtdb.europe-west1.firebasedatabase.app"});
+  const db  = getDatabase(app);
+  const auth = getAuth(app);
+  signInAnonymously(auth).catch(console.error);
+
+  let uid = null;
+  onAuthStateChanged(auth, (u) => { uid = u?.uid || null; console.log("Firebase uid:", uid); });
+
+  // --- 3) Lightweight batch uploader (1s or 50 rows)
+  let sessionId = null;
+  let buffer = [];
+  let flushTimer = null;
+  const BUFFER_MAX = 50;
+  const FLUSH_MS = 1000;
+
+  function startSession(meta) {
+    if (!uid) console.warn("No uid yet (will still buffer)"); 
+    sessionId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+    // session metadata
+    set(ref(db, `users/${uid}/sessions/${sessionId}/meta`), { ...meta, startedAt: Date.now(), sdk: "web-rtdb" }).catch(()=>{});
+    if (flushTimer) clearInterval(flushTimer);
+    flushTimer = setInterval(flushBuffer, FLUSH_MS);
+  }
+
+  async function flushBuffer() {
+    if (!uid || !sessionId || buffer.length === 0) return;
+    const updates = {};
+    for (const row of buffer) {
+      const key = push(ref(db, `users/${uid}/sessions/${sessionId}/readings`)).key;
+      updates[`users/${uid}/sessions/${sessionId}/readings/${key}`] = row;
+    }
+    buffer = [];
+    try { await update(ref(db), updates); } catch (e) { console.error("upload error", e); }
+  }
+
+  function stopSession() {
+    if (flushTimer) clearInterval(flushTimer), flushTimer = null;
+    flushBuffer();
+  }
+
+  function onSample(row) {
+    if (!uid || !sessionId) { buffer.push(row); return; }
+    buffer.push(row);
+    if (buffer.length >= BUFFER_MAX) flushBuffer();
+  }
+
+  // Expose to your existing script:
+  window.firebaseUpload = { startSession, onSample, stopSession };
+
+  // --- 4) (Optional) Open data: weather → Firebase every 60s while logging
+  let weatherTimer = null;
+  function tile(lat, lon, step=0.01) { const r=v => (Math.round(v/step)*step).toFixed(2); return `${r(lat)}_${r(lon)}`; }
+
+  async function writeWeather(lat, lon) {
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation`;
+      const j = await fetch(url).then(r=>r.json());
+      const t = Date.now(); const til = tile(lat, lon);
+      await set(ref(db, `open/weather/${til}/${t}`), {
+        lat, lon, current: j.current || j.current_weather, fetched_at: t, source: "open-meteo"
+      });
+    } catch (e) { console.error("weather ingest", e); }
+  }
+
+  function startWeatherIngest(getLatLonFn) {
+    if (weatherTimer) clearInterval(weatherTimer);
+    const tick = async () => {
+      const p = getLatLonFn?.();
+      if (p && p.lat != null && p.lon != null) await writeWeather(p.lat, p.lon);
+    };
+    tick(); weatherTimer = setInterval(tick, 60_000);
+  }
+  function stopWeatherIngest(){ if (weatherTimer) clearInterval(weatherTimer), weatherTimer=null; }
+
+  window.weatherIngest = { startWeatherIngest, stopWeatherIngest };
+</script>
+
 <body>
   <header>
     <h1>📱 Mobile Sensor Logger — Accelerometer + GPS + (opt) Mic</h1>
