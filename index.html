@@ -25,7 +25,7 @@
   </style>
 </head>
 
-<!-- Firebase module: NO AUTH, writes to /public/... with rich logs -->
+<!-- Firebase module: NO AUTH, writes to /public/... + weather cache -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import { getDatabase, ref, push, update, set } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
@@ -42,7 +42,7 @@
   const db  = getDatabase(app);
   console.log("[cloud] Firebase initialized →", firebaseConfig.databaseURL);
 
-  // --- Tiny batch uploader (NO AUTH) ---
+  // ---- Batch uploader (no auth) ----
   let sessionId = null;
   let buffer = [];
   let flushTimer = null;
@@ -56,7 +56,6 @@
       .catch(e => console.warn("[cloud] meta write warn:", e?.message));
     if (flushTimer) clearInterval(flushTimer);
     flushTimer = setInterval(flushBuffer, FLUSH_MS);
-    // also echo into on-page Status panel if available
     window.log?.(`[cloud] session: public/sessions/${sessionId}`, 'ok');
   }
 
@@ -94,27 +93,53 @@
 
   window.firebaseUpload = { startSession, onSample, stopSession };
 
-  // --- Optional: Open data (weather) every 60s while logging
+  // ---- Weather ingest → /open/weather + cache latest for rows ----
   let weatherTimer = null;
+  let lastWeather = null; // cached snapshot
+
   function tile(lat, lon, step=0.01){ const r=v => (Math.round(v/step)*step).toFixed(2); return `${r(lat)}_${r(lon)}`; }
+
   async function writeWeather(lat, lon){
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation`;
       const j = await fetch(url).then(r=>r.json());
-      const t = Date.now(), til = tile(lat, lon);
-      await set(ref(db, `open/weather/${til}/${t}`), { lat, lon, current: j.current || j.current_weather, fetched_at: t, source: "open-meteo" });
-      console.log(`[cloud] weather write @ ${til}/${t}`);
-    } catch(e){ console.error("[cloud] weather ingest", e); }
+      const cur = j.current || j.current_weather || {};
+
+      const t = Date.now();
+      lastWeather = {
+        ts: t,
+        source: "open-meteo",
+        temp_c: cur.temperature_2m ?? cur.temperature ?? null,
+        wind_mps: cur.wind_speed_10m ?? (typeof cur.windspeed === "number" ? cur.windspeed/3.6 : null),
+        precip_mm: cur.precipitation ?? null
+      };
+      window.__lastWeather = lastWeather; // expose to logger
+
+      const til = tile(lat, lon);
+      await set(ref(db, `open/weather/${til}/${t}`), { lat, lon, current: lastWeather, fetched_at: t });
+
+      console.log(`[cloud] weather write @ ${til}/${t}`, lastWeather);
+      window.log?.(`[cloud] weather @ ${til}`, 'ok');
+    } catch(e){
+      console.error("[cloud] weather ingest", e);
+      window.log?.(`[cloud] weather error: ${e.message}`, 'err');
+    }
   }
+
   function startWeatherIngest(getLatLonFn){
     if (weatherTimer) clearInterval(weatherTimer);
-    const tick = async () => { const c = getLatLonFn?.(); if (c) await writeWeather(c.lat, c.lon); };
-    tick(); weatherTimer = setInterval(tick, 60_000);
+    const tick = async () => {
+      const p = getLatLonFn?.();
+      if (p && p.lat != null && p.lon != null) await writeWeather(p.lat, p.lon);
+    };
+    tick();                                  // fetch immediately
+    weatherTimer = setInterval(tick, 60_000);// then every 60s
     console.log("[cloud] weather ingest started");
   }
   function stopWeatherIngest(){ if (weatherTimer) clearInterval(weatherTimer), weatherTimer=null; console.log("[cloud] weather ingest stopped"); }
+  function fetchNow(lat, lon){ return writeWeather(lat, lon); }
 
-  window.weatherIngest = { startWeatherIngest, stopWeatherIngest };
+  window.weatherIngest = { startWeatherIngest, stopWeatherIngest, fetchNow };
   console.log("[cloud] uploader ready (no-auth)");
 </script>
 
@@ -125,7 +150,7 @@
   <main>
     <div class="card">
       <p>Record accelerometer, GPS and optional microphone <em>loudness</em> (no audio saved). Exports a CSV locally—no server needed.</p>
-      <p class="small">Columns: timestamp_iso, timestamp_ms, lat, lon, accuracy_m, altitude_m, speed_mps, heading_deg, ax, ay, az, a_total, rot_alpha_dps, rot_beta_dps, rot_gamma_dps, <strong>dbfs, db_smooth, mic_active, tag</strong>, sample_id</p>
+      <p class="small">Columns: timestamp_iso, timestamp_ms, lat, lon, accuracy_m, altitude_m, speed_mps, heading_deg, ax, ay, az, a_total, rot_alpha_dps, rot_beta_dps, rot_gamma_dps, <strong>dbfs, db_smooth, mic_active, tag</strong>, sample_id, <strong>w_temp_c, w_wind_mps, w_precip_mm, w_ts, w_source</strong></p>
     </div>
 
     <div class="card">
@@ -197,9 +222,11 @@
   let data = [];
   let sampleId = 0;
 
+  // motion snapshot
   let lastAx = null, lastAy = null, lastAz = null, lastAmag = null;
   let motionHandler = null;
 
+  // audio state
   let audioCtx = null, analyser = null, micStream = null, micRaf = null;
   let micActive = false;
   let lastDbfs = null, lastDbSmooth = null;
@@ -207,6 +234,7 @@
   let tags = [];
   let lastTag = null;
 
+  // sampling control
   let writeMode = 'throttle';
   let minIntervalMs = 50;
   let timerId = null;
@@ -220,7 +248,7 @@
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
   };
-  window.log = log; // <-- expose for Firebase module to use
+  window.log = log; // let the Firebase module write into our Status box
 
   function hasMotionSupport(){ return 'DeviceMotionEvent' in window; }
   function hasGeoSupport(){ return 'geolocation' in navigator; }
@@ -244,14 +272,11 @@
             { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
           );
         });
-      } else {
-        log('Geolocation not supported on this device.', 'err');
-      }
-    } catch (e) {
-      log('Permission request error: ' + e.message, 'err');
-    }
+      } else { log('Geolocation not supported on this device.', 'err'); }
+    } catch (e) { log('Permission request error: ' + e.message, 'err'); }
   }
 
+  // --- CSV builder ---
   function buildCSV(headers, rows){
     const esc = (v) => {
       if (v == null) return '';
@@ -267,6 +292,7 @@
 
   function makeRow(now){
     const g = latestGeo ? latestGeo.coords : {};
+    const w = window.__lastWeather || null;  // <-- latest weather snapshot
     const r = { alpha: null, beta: null, gamma: null };
     return {
       timestamp_iso: new Date(now).toISOString(),
@@ -286,7 +312,14 @@
       db_smooth: lastDbSmooth,
       mic_active: micActive ? 1 : 0,
       tag: lastTag,
-      sample_id: sampleId++
+      sample_id: sampleId++,
+
+      // --- Weather at sample time ---
+      w_temp_c:    w?.temp_c ?? null,
+      w_wind_mps:  w?.wind_mps ?? null,
+      w_precip_mm: w?.precip_mm ?? null,
+      w_ts:        w?.ts ?? null,
+      w_source:    w?.source ?? null
     };
   }
 
@@ -294,7 +327,7 @@
     const row = makeRow(now);
     data.push(row);
     samplesEl.textContent = String(data.length);
-    window.firebaseUpload?.onSample(row); // <-- stream to Firebase
+    window.firebaseUpload?.onSample(row); // stream to Firebase
     if (lastTag) lastTag = null;
   }
 
@@ -309,24 +342,29 @@
     downloadBtn.disabled = true;
     log('Recording started', 'ok');
 
-    // start cloud session + (optional) weather ingest
+    // start cloud + weather ingest
     window.firebaseUpload?.startSession({ mode: writeMode, rate: rateSel.value, mic: micActive ? 1 : 0 });
     window.weatherIngest?.startWeatherIngest(() => {
       const c = latestGeo?.coords;
       return c ? { lat: c.latitude, lon: c.longitude } : null;
     });
 
+    // GPS
     if (hasGeoSupport()) {
       watchId = navigator.geolocation.watchPosition((pos) => {
         latestGeo = pos;
         const s = pos.coords.speed;
         gpsEl.textContent = `${pos.coords.latitude?.toFixed?.(5) ?? '—'}, ${pos.coords.longitude?.toFixed?.(5) ?? '—'} ±${(pos.coords.accuracy||0).toFixed(0)}m`;
         speedEl.textContent = (s!=null? s.toFixed(2): '—');
+
+        // kick weather immediately on first/each fix
+        window.weatherIngest?.fetchNow(pos.coords.latitude, pos.coords.longitude);
       }, (err) => {
         log('GPS error: ' + err.message, 'warn');
       }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 });
     }
 
+    // Motion
     motionHandler = (ev) => {
       const aIncG = ev.accelerationIncludingGravity || ev.acceleration || {};
       lastAx = aIncG.x ?? null; lastAy = aIncG.y ?? null; lastAz = aIncG.z ?? null;
@@ -342,6 +380,7 @@
     };
     window.addEventListener('devicemotion', motionHandler, { passive: true });
 
+    // Timer mode
     if (writeMode === 'timer'){
       if (timerId) clearInterval(timerId);
       timerId = setInterval(() => { pushRow(Date.now()); }, intervalMs);
@@ -357,8 +396,8 @@
     if (!recording) return;
     recording = false;
 
-    window.firebaseUpload?.stopSession();                 // <-- end cloud session
-    window.weatherIngest?.stopWeatherIngest?.();          // <-- stop open data
+    window.firebaseUpload?.stopSession();          // end cloud session
+    window.weatherIngest?.stopWeatherIngest?.();   // stop weather
 
     startBtn.disabled = false;
     stopBtn.disabled = true;
@@ -376,7 +415,9 @@
     const headers = [
       'timestamp_iso','timestamp_ms','lat','lon','accuracy_m','altitude_m','speed_mps','heading_deg',
       'ax','ay','az','a_total','rot_alpha_dps','rot_beta_dps','rot_gamma_dps',
-      'dbfs','db_smooth','mic_active','tag','sample_id'
+      'dbfs','db_smooth','mic_active','tag','sample_id',
+      // weather fields:
+      'w_temp_c','w_wind_mps','w_precip_mm','w_ts','w_source'
     ];
     const csv = buildCSV(headers, data);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -392,9 +433,56 @@
     log('CSV downloaded', 'ok');
   }
 
-  async function startMic(){ /* unchanged mic code */ /* ... */ }
-  function stopMic(){ /* unchanged mic code */ /* ... */ }
+  // Mic helpers (unchanged)
+  async function startMic(){
+    try{
+      if (micActive) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        log('Mic not supported on this browser.', 'err'); return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      micStream = stream;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      const src = audioCtx.createMediaStreamSource(stream);
+      src.connect(analyser);
+      micActive = true;
+      document.getElementById('startMicBtn').disabled = true;
+      document.getElementById('stopMicBtn').disabled = false;
+      micEl.textContent = 'on';
 
+      const buf = new Float32Array(analyser.fftSize);
+      const alpha = 0.2;
+      const update = () => {
+        if (!micActive) return;
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i=0;i<buf.length;i++){ const v=buf[i]; sum += v*v; }
+        const rms = Math.sqrt(sum / buf.length) + 1e-12;
+        lastDbfs = 20 * Math.log10(rms);
+        lastDbSmooth = (lastDbSmooth==null) ? lastDbfs : (alpha*lastDbfs + (1-alpha)*lastDbSmooth);
+        dbEl.textContent = lastDbSmooth.toFixed(1);
+        micRaf = requestAnimationFrame(update);
+      };
+      update();
+      log('Mic started (dBFS, relative; no audio stored).', 'ok');
+    }catch(e){ log('Mic error: ' + e.message, 'err'); }
+  }
+  function stopMic(){
+    if (!micActive) return;
+    micActive = false;
+    if (micRaf) cancelAnimationFrame(micRaf), micRaf = null;
+    if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+    if (audioCtx) { audioCtx.close(); audioCtx=null; }
+    analyser=null; lastDbfs=null;
+    document.getElementById('startMicBtn').disabled = false;
+    document.getElementById('stopMicBtn').disabled = true;
+    micEl.textContent = 'off';
+    log('Mic stopped', 'ok');
+  }
+
+  // Tag helper
   function addTag(){
     const label = prompt('Tag label (e.g., obstruction, ramp, noise, note:...)');
     if (!label) return;
@@ -404,12 +492,14 @@
     log('Tagged: ' + label, 'ok');
   }
 
+  // Tests
   function runSelfTests(){
     (function(){ const H=['a','b']; const R=[{a:1,b:2}]; const csv=buildCSV(H,R); const lines=csv.split('\n'); const ok=lines.length>=2&&lines[0]==='a,b'&&lines[1].startsWith('1,2'); log('[test] CSV newline construction', ok?'ok':'err'); })();
     (function(){ const H=['x']; const R=[{x:'he said, "hi"'}]; const csv=buildCSV(H,R); const ok=csv.includes('"he said, ""hi"""'); log('[test] CSV quoting commas/quotes', ok?'ok':'err'); })();
     (function(){ const H=['y']; const R=[{y:'line1\nline2'}]; const csv=buildCSV(H,R); const ok=csv.includes('"line1\nline2"'); log('[test] CSV quoting newlines', ok?'ok':'err'); })();
   }
 
+  // UI
   permBtn.addEventListener('click', requestPermissions);
   startBtn.addEventListener('click', start);
   stopBtn.addEventListener('click', stop);
