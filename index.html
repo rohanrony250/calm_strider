@@ -29,15 +29,17 @@
   import { getDatabase, ref, push, update, set } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-  
-var admin = require("firebase-admin");
-
-var serviceAccount = require("urban-app-be1f9-firebase-adminsdk-fbsvc-21c8e499fe.json");
-
-
+  // --- 1) Your Firebase project config (from Firebase Console)
+  const firebaseConfig = {
+    apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
+    authDomain: "urban-app-be1f9.firebaseapp.com",
+    databaseURL: "https://urban-app-be1f9-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "urban-app-be1f9",
+    appId: "1:297008657169:web:e9a9aadf8332b71a6392b0"
+  };
 
   // --- 2) Init + anonymous auth
-  const app = admin.initializeApp({credential: admin.credential.cert(serviceAccount), databaseURL: "https://urban-app-be1f9-default-rtdb.europe-west1.firebasedatabase.app"});
+  const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
   const auth = getAuth(app);
   signInAnonymously(auth).catch(console.error);
@@ -170,6 +172,9 @@ var serviceAccount = require("urban-app-be1f9-firebase-adminsdk-fbsvc-21c8e499fe
     </div>
   </main>
 
+
+
+  
 <script>
 (function(){
   const permBtn = document.getElementById('permBtn');
