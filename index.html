@@ -97,7 +97,10 @@
   let weatherTimer = null;
   let lastWeather = null; // cached snapshot
 
-  function tile(lat, lon, step=0.01){ const r=v => (Math.round(v/step)*step).toFixed(2); return `${r(lat)}_${r(lon)}`; }
+  function tile(lat, lon, step = 0.01) {
+    const idx = v => Math.round(v / step);   // integer index, no decimals
+    return `${idx(lat)}_${idx(lon)}`;        // e.g. "5325_-614" (RTDB-safe)
+  }
 
   async function writeWeather(lat, lon){
     try {
