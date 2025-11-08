@@ -56,17 +56,24 @@
     window.log?.(`[cloud] session: public/sessions/${sessionId}`, 'ok');
   }
 
-  async function flushBuffer() {
-    if (!sessionId || buffer.length === 0) return;
-    const updates = {};
-    for (const row of buffer) {
-      const key = push(ref(db, `public/sessions/${sessionId}/readings`)).key;
-      updates[`public/sessions/${sessionId}/readings/${key}`] = row;
-    }
-    buffer = [];
-    try { await update(ref(db), updates); }
-    catch (e) { console.error(e); window.log?.(`[cloud] upload error: ${e.message}`, 'err'); }
+async function flushBuffer() {
+  if (!sessionId || buffer.length === 0) return;
+  const updates = {};
+  for (const row of buffer) {
+    const key = push(ref(db, `public/sessions/${sessionId}/readings`)).key;
+    updates[`public/sessions/${sessionId}/readings/${key}`] = row;
   }
+  const count = buffer.length;   // <- how many rows we’re about to send
+  buffer = [];
+  try {
+    await update(ref(db), updates);
+    console.log(`[cloud] uploaded ${count} row(s) → public/sessions/${sessionId}`);
+    window.log?.(`[cloud] uploaded ${count} row(s)`, 'ok');   // shows in your Status panel
+  } catch (e) {
+    console.error('[cloud] upload error:', e);
+    window.log?.(`[cloud] upload error: ${e.message}`, 'err');
+  }
+}
 
   function stopSession(){ if (flushTimer) clearInterval(flushTimer), flushTimer=null; flushBuffer(); }
   function onSample(row){ buffer.push(row); if (buffer.length >= BUFFER_MAX) flushBuffer(); }
