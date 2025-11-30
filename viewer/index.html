@@ -149,7 +149,7 @@
       </div>
     </div>
 
-    <!-- Weight sliders (now retroactive) -->
+    <!-- Weight sliders (retroactive) -->
     <div class="weights">
       <span class="pill">
         <label for="wRough">Roughness</label>
@@ -173,11 +173,11 @@
       </span>
     </div>
     <div class="hint" style="margin-top:6px;">
-      Comfort = 100 – weighted penalties for roughness, noise, rain, and wind. Changing weights now recomputes comfort for the whole session.
+      Comfort = 100 – weighted penalties for roughness, noise, rain, and wind. Changing weights recomputes comfort for the whole session.
     </div>
   </div>
 
-  <!-- Route comparison table (all sessions) -->
+  <!-- Route comparison table -->
   <div class="card">
     <div class="k">Route comparison (all sessions)</div>
     <div class="hint">
@@ -251,6 +251,10 @@
   };
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
+
+  // sessions root + dynamic per-session paths (handles extra "some_name" level)
+  let sessionsRoot = 'public/sessions';
+  let sessionIndex = {}; // { sessionId: { label, readingsPath, metaPath, analysisPath } }
 
   // --- UI refs ---
   const sessionSel  = document.getElementById('sessionSel');
@@ -365,7 +369,7 @@
     chart.update('none');
   }
 
-  // Comfort weights (global)
+  // Comfort weights (global) + retro recompute
   const weights = { rough:1.0, noise:1.0, rain:1.0, wind:1.0 };
   function syncWeights(){
     weights.rough = parseFloat(wRoughInput.value);
@@ -377,7 +381,7 @@
     wRainVal.textContent  = weights.rain.toFixed(1);
     wWindVal.textContent  = weights.wind.toFixed(1);
 
-    // NEW: retroactively recompute whole session when sliders change
+    // retroactively recompute whole session when sliders change
     recomputeSessionSummary();
   }
   [wRoughInput,wNoiseInput,wRainInput,wWindInput].forEach(inp=>inp.addEventListener('input', syncWeights));
@@ -422,10 +426,13 @@
   let stats=null;
   let lastSummaryWrite=0;
   const SUMMARY_MIN_INTERVAL=5000; // ms
-  let sessionRows=[];              // NEW: cache of all readings for current session
+  let sessionRows=[];              // cache of all readings for current session
 
   async function writeSummary(){
     if (!currentSessionId || !stats) return;
+    const info = sessionIndex[currentSessionId];
+    if (!info) return;
+
     const avgComfort = stats.n ? (stats.sumComfort / stats.n) : null;
     const pGood = stats.n ? (stats.nGood*100/stats.n).toFixed(1) : '0.0';
     const pOk   = stats.n ? (stats.nOk*100/stats.n).toFixed(1)   : '0.0';
@@ -447,7 +454,7 @@
       updatedAt: Date.now()
     };
     try{
-      await set(ref(db, `public/sessions/${currentSessionId}/analysis`), doc);
+      await set(ref(db, info.analysisPath), doc);
     }catch(e){
       log('summary write error: '+e.message,'err');
     }
@@ -457,7 +464,7 @@
       : '—';
   }
 
-  // NEW: retroactive recompute using sessionRows + current weights
+  // Retroactive recompute
   function recomputeSessionSummary(){
     if (!currentSessionId || !sessionRows.length){
       stats = null;
@@ -509,7 +516,6 @@
       updateComfortUI(lastParts);
     }
 
-    // local summary text
     const avgComfort = stats.n ? (stats.sumComfort / stats.n) : null;
     const pGood = stats.n ? (stats.nGood*100/stats.n).toFixed(1) : '0.0';
     const pOk   = stats.n ? (stats.nOk*100/stats.n).toFixed(1)   : '0.0';
@@ -578,39 +584,86 @@
   // Firebase listening
   let detach=null;
 
+  // Try to find sessions root + handle "some_name" level
   async function loadSessions(){
     sessionSel.innerHTML='';
     routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
     statusEl.textContent='Loading sessions…';
-    log('Loading sessions from /public/sessions');
+    log('Loading sessions (trying /public/sessions then /sessions)');
+
+    sessionIndex = {};
 
     try{
-      const snap = await get(ref(db, 'public/sessions'));
-      if (!snap.exists()){
-        statusEl.textContent='No sessions found under /public/sessions';
-        log('No sessions found. Is the logger writing to public/sessions/?','warn');
+      let usedRoot = null;
+      let snap = await get(ref(db, 'public/sessions'));
+      if (snap.exists()) {
+        usedRoot = 'public/sessions';
+      } else {
+        log('No data under /public/sessions, trying /sessions…','warn');
+        const altSnap = await get(ref(db, 'sessions'));
+        if (altSnap.exists()) {
+          snap = altSnap;
+          usedRoot = 'sessions';
+        }
+      }
+
+      if (!usedRoot) {
+        statusEl.textContent='No sessions found (checked /public/sessions and /sessions)';
+        log('No sessions at /public/sessions or /sessions. Check Firebase paths.', 'err');
         routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes found yet. Record a walk with the logger.</td></tr>';
         return;
       }
 
+      sessionsRoot = usedRoot;
+      log(`Using sessions root: /${sessionsRoot}`, 'ok');
+
+      const rootVal = snap.val() || {};
       const sessions=[];
-      snap.forEach(ch=>{
-        const id=ch.key;
-        const val=ch.val() || {};
-        const meta=val.meta || {};
-        const analysis=val.analysis || null;
-        const started=meta.startedAt || 0;
-        sessions.push({id,started,meta,analysis});
-      });
+
+      for (const [sessionId, val] of Object.entries(rootVal)) {
+        const node = val || {};
+
+        // Detect baseNode: either directly has readings, or one child has readings
+        let baseKey = null;
+        let baseNode = node;
+        if (!node.readings || typeof node.readings !== 'object') {
+          for (const [k, childNode] of Object.entries(node)) {
+            if (childNode && typeof childNode === 'object' && childNode.readings) {
+              baseKey = k;
+              baseNode = childNode;
+              break;
+            }
+          }
+        }
+
+        const meta = baseNode.meta || node.meta || {};
+        const analysis = baseNode.analysis || node.analysis || null;
+        const started = meta.startedAt || meta.startTime || 0;
+
+        const basePath = baseKey
+          ? `${sessionsRoot}/${sessionId}/${baseKey}`
+          : `${sessionsRoot}/${sessionId}`;
+
+        const readingsPath = `${basePath}/readings`;
+        const metaPath = `${basePath}/meta`;
+        const analysisPath = `${basePath}/analysis`;
+
+        const label = meta.routeLabel
+          || (started ? `Walk ${new Date(started).toISOString().replace('T',' ').slice(0,16)}` : sessionId);
+
+        sessionIndex[sessionId] = { label, readingsPath, metaPath, analysisPath };
+
+        sessions.push({id:sessionId, started, meta, analysis});
+      }
 
       sessions.sort((a,b)=>b.started-a.started);
-      log(`Found ${sessions.length} sessions.`,'ok');
+      log(`Found ${sessions.length} sessions under /${sessionsRoot}.`,'ok');
 
       // Dropdown options
       sessions.forEach((s,i)=>{
         const opt=document.createElement('option');
         const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
-        const label = s.meta.routeLabel || `Walk ${dt}`;
+        const label = sessionIndex[s.id]?.label || `Walk ${dt}`;
         if (s.analysis && typeof s.analysis.avgComfort==='number'){
           opt.textContent = `${label} — avg ${s.analysis.avgComfort.toFixed(1)} · ${dt}`;
         } else {
@@ -640,7 +693,7 @@
           const nGood=a?.nGood ?? 0;
           const nOk=a?.nOk ?? 0;
           const nLow=a?.nLow ?? 0;
-          const label=s.meta.routeLabel || (s.started? `Walk ${new Date(s.started).toISOString().replace('T',' ').slice(0,16)}` : s.id);
+          const label=sessionIndex[s.id]?.label || (s.started? `Walk ${new Date(s.started).toISOString().replace('T',' ').slice(0,16)}` : s.id);
           return {id:s.id,label,started:s.started,avg,n,nGood,nOk,nLow};
         });
 
@@ -700,11 +753,17 @@
     }catch(e){
       statusEl.textContent='Error loading sessions';
       log('Error loading sessions: '+e.message,'err');
-      log('If message is PERMISSION_DENIED, check Firebase rules for /public/sessions .read.','err');
+      log('If message is PERMISSION_DENIED, check Firebase rules for .read on sessions root.','err');
     }
   }
 
   async function listenSession(sessionId){
+    const info = sessionIndex[sessionId];
+    if (!info) {
+      log(`No path info found for session ${sessionId}. Check viewer vs logger structure.`, 'err');
+      return;
+    }
+
     if(detach){ detach(); detach=null; }
     currentSessionId = sessionId;
 
@@ -732,26 +791,26 @@
     lastSummaryWrite=0;
     sessionRows = [];
 
-    const path=`public/sessions/${sessionId}/readings`;
+    const path=info.readingsPath;
     const readingsRef = ref(db, path);
     const handler=snap=>feedRow(snap.val());
     onChildAdded(readingsRef,handler);
     detach=()=> off(readingsRef,'child_added',handler);
 
-    statusEl.textContent=`Listening: ${sessionId}`;
+    statusEl.textContent=`Listening: ${sessionId} (${path})`;
     stopBtn.disabled=false; listenBtn.disabled=true; sessionSel.disabled=true;
     setTimeout(()=>map.invalidateSize(),120);
-    log(`Listening to /${path}`,'ok');
+    log(`Listening to ${path}`,'ok');
 
     try{
-      const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
+      const metaSnap=await get(ref(db, info.metaPath));
       if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
     }catch(e){
       log('meta load error: '+e.message,'err');
     }
 
     try{
-      const anaSnap=await get(child(ref(db),`public/sessions/${sessionId}/analysis`));
+      const anaSnap=await get(ref(db, info.analysisPath));
       if(anaSnap.exists()){
         const a=anaSnap.val();
         const n=a.n||0, avg=a.avgComfort!=null ? a.avgComfort : null;
