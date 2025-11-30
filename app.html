@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Calm Strider — Live Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --bg:#0b1320; --card:#121a33; --ink:#e9eef6; --mut:#a8b3cf; --line:#1f2a4a; }
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:10;background:#111a2e;padding:12px 18px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  h1{font-size:18px;margin:0}
+  main{max-width:1200px;margin:0 auto;padding:16px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  select,button{appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
+    padding:8px 10px;border-radius:10px;font-weight:600;cursor:pointer}
+  button[disabled]{opacity:.6;cursor:not-allowed}
+  .statgrid{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px}
+  .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .k{font-size:12px;color:var(--mut)}
+  .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
+  #map{height:420px;border-radius:12px}
+  canvas{background:#0f1730;border-radius:12px;border:1px solid var(--line)}
+  .ok{color:#6df0a8} .warn{color:#ffd580} .err{color:#ff8797}
+  .log{max-height:160px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
+  @media (max-width:1000px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(2,1fr)} }
+</style>
+</head>
+<body>
+<header><h1>📊 Calm Strider — Live Dashboard</h1></header>
+<main>
+
+  <div class="card">
+    <div class="controls">
+      <label>Session:
+        <select id="sessionSel"></select>
+      </label>
+      <button id="listenBtn">Listen live</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <span id="status" class="k"></span>
+    </div>
+    <div class="statgrid" style="margin-top:10px">
+      <div class="stat"><div class="k">Samples</div><div class="v" id="sCount">0</div></div>
+      <div class="stat"><div class="k">Comfort score</div><div class="v" id="comfort">—</div></div>
+      <div class="stat"><div class="k">Speed m/s</div><div class="v" id="spd">—</div></div>
+      <div class="stat"><div class="k">Accel |a|</div><div class="v" id="amag">—</div></div>
+      <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card"><div id="map"></div></div>
+    <div class="card">
+      <canvas id="chartAccel" height="180"></canvas>
+      <div style="height:8px"></div>
+      <canvas id="chartNoise" height="120"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k">Log</div>
+    <pre id="log" class="log"></pre>
+  </div>
+
+</main>
+
+<!-- Libraries -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<!-- Firebase (module) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+  import { getDatabase, ref, child, get, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+
+  // --- Your existing config ---
+  const firebaseConfig = {
+    apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
+    authDomain: "urban-app-be1f9.firebaseapp.com",
+    databaseURL: "https://urban-app-be1f9-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "urban-app-be1f9",
+    appId: "1:297008657169:web:e9a9aadf8332b71a6392b0"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db  = getDatabase(app);
+
+  // --- UI refs ---
+  const sessionSel = document.getElementById('sessionSel');
+  const listenBtn  = document.getElementById('listenBtn');
+  const stopBtn    = document.getElementById('stopBtn');
+  const statusEl   = document.getElementById('status');
+  const sCountEl   = document.getElementById('sCount');
+  const comfortEl  = document.getElementById('comfort');
+  const spdEl      = document.getElementById('spd');
+  const amagEl     = document.getElementById('amag');
+  const tempEl     = document.getElementById('temp');
+  const logEl      = document.getElementById('log');
+
+  const log = (msg, cls='')=>{
+    const line=document.createElement('div'); line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+    if(cls) line.className=cls; logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight;
+  };
+
+  // --- Map ---
+  const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' }).addTo(map);
+  const track = L.polyline([], {color:'#5bc0ff', weight:4, opacity:.9}).addTo(map);
+  const marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
+
+  // --- Charts ---
+  const accelChart = new Chart(document.getElementById('chartAccel'),{
+    type:'line',
+    data:{ labels:[], datasets:[{ label:'|a| m/s²', data:[], tension:.2, borderWidth:2, pointRadius:0 }]},
+    options:{ animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}} }
+  });
+  const noiseChart = new Chart(document.getElementById('chartNoise'),{
+    type:'line',
+    data:{ labels:[], datasets:[{ label:'dBFS', data:[], tension:.2, borderWidth:2, pointRadius:0 }]},
+    options:{ animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}} }
+  });
+
+  // --- State ---
+  let detach = null;                 // function to remove listener
+  let count = 0;
+  let lastAmagVals = [];             // for rolling std
+  const MAX_POINTS = 600;
+
+  // Populate session dropdown with the latest 20
+  async function loadSessions(){
+    sessionSel.innerHTML = '';
+    const snap = await get(query(ref(db,'public/sessions'), orderByKey(), limitToLast(20)));
+    const sessions = [];
+    snap.forEach(ch => {
+      const id = ch.key;
+      const started = ch.val()?.meta?.startedAt || 0;
+      sessions.push({ id, started });
+    });
+    sessions.sort((a,b)=>b.started-a.started);
+    sessions.forEach((s,i)=>{
+      const opt = document.createElement('option');
+      const dt = s.started ? new Date(s.started).toISOString().replace('T',' ').slice(0,19) : 'unknown';
+      opt.value = s.id; opt.textContent = `${dt} — ${s.id.slice(0,8)}…`;
+      if(i===0) opt.selected = true;
+      sessionSel.appendChild(opt);
+    });
+    statusEl.textContent = sessions.length? 'Pick a session and click Listen' : 'No sessions found';
+  }
+
+  function listen(sessionId){
+    if(detach){ detach(); detach=null; }
+    const q = query(ref(db, `public/sessions/${sessionId}/readings`), orderByKey(), limitToLast(MAX_POINTS));
+    const handler = snap => onRow(snap.val());
+    const unsub = onChildAdded(q, handler);
+    detach = ()=> off(q, 'child_added', handler);
+    statusEl.textContent = `Listening: ${sessionId}`;
+    stopBtn.disabled = false; listenBtn.disabled = true; sessionSel.disabled = true;
+    log(`Listening to /public/sessions/${sessionId}/readings`, 'ok');
+  }
+
+  function stop(){
+    if(detach){ detach(); detach=null; log('Stopped listening','warn'); }
+    stopBtn.disabled = true; listenBtn.disabled = false; sessionSel.disabled = false; statusEl.textContent = '';
+  }
+
+  // Comfort score: 0..100 (higher better). Rolling std of |a| + noise + rain/wind.
+  function comfortScore(aStd, dbfs, precip, wind){
+    const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
+    const s = 100
+      - clamp(aStd*12,  0, 40)      // roughness
+      - clamp((dbfs+60)*0.8, 0, 25) // louder → worse (dbfs is negative)
+      - clamp((precip||0)*10, 0, 20)// rain penalty
+      - clamp((wind||0)*2,   0, 15);// wind penalty
+    return clamp(Math.round(s), 0, 100);
+  }
+
+  function rollStdPush(arr, val, win=20){
+    if(val==null) return 0;
+    arr.push(val); if(arr.length>win) arr.shift();
+    const n=arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n;
+    const v = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
+    return Math.sqrt(v);
+  }
+
+  function onRow(r){
+    count++; sCountEl.textContent = count.toString();
+    // Stats tiles
+    if (r.speed_mps!=null) spdEl.textContent = (+r.speed_mps).toFixed(2);
+    if (r.a_total!=null)   amagEl.textContent = (+r.a_total).toFixed(2);
+    if (r.w_temp_c!=null)  tempEl.textContent = (+r.w_temp_c).toFixed(1);
+
+    // Comfort
+    const std = rollStdPush(lastAmagVals, r.a_total ?? null, 20);
+    const score = comfortScore(std, r.db_smooth ?? r.dbfs ?? -50, r.w_precip_mm, r.w_wind_mps);
+    comfortEl.textContent = score;
+    comfortEl.className = score>=70 ? 'ok' : score>=50 ? 'warn' : 'err';
+
+    // Actuation emulation: vibrate/beep when uncomfortable
+    if (score < 50) {
+      if (navigator.vibrate) navigator.vibrate(100);
+      try {
+        const ctx = new (window.AudioContext||window.webkitAudioContext)();
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.type='sine'; o.frequency.value=660; o.connect(g); g.connect(ctx.destination);
+        g.gain.value=0.03; o.start(); setTimeout(()=>{o.stop();ctx.close();},120);
+      } catch(e) {}
+    }
+
+    // Map
+    if (r.lat!=null && r.lon!=null){
+      const latlng=[+r.lat,+r.lon];
+      track.addLatLng(latlng); marker.setLatLng(latlng);
+      if (track.getLatLngs().length===1) map.setView(latlng, 16);
+    }
+
+    // Charts
+    const t = r.timestamp_ms ? new Date(r.timestamp_ms).toLocaleTimeString() : '';
+    pushChart(accelChart, t, r.a_total ?? null);
+    pushChart(noiseChart, t, r.db_smooth ?? r.dbfs ?? null);
+  }
+
+  function pushChart(chart,label,val){
+    if(val==null) return;
+    const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val);
+    if(d.labels.length>MAX_POINTS){ d.labels.shift(); d.datasets[0].data.shift(); }
+    chart.update('none');
+  }
+
+  // Wire up
+  listenBtn.addEventListener('click', ()=> listen(sessionSel.value));
+  stopBtn.addEventListener('click', stop);
+
+  // Boot
+  loadSessions().catch(e=>{ log('Error loading sessions: '+e.message,'err') });
+</script>
+</body>
+</html>
