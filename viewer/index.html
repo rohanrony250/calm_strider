@@ -80,6 +80,15 @@
   .weights label{font-size:11px;white-space:nowrap}
   .weights span.val{font-size:11px}
   input[type="range"]{width:90px;background:transparent}
+
+  /* Table styles for route comparison */
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  th,td{padding:4px 6px;border-bottom:1px solid var(--line)}
+  th{text-align:left;color:var(--mut);font-weight:600}
+  td.num{text-align:right}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover{background:#151f3a}
+
   @media(max-width:1020px){
     .row{grid-template-columns:1fr}
     .statgrid{grid-template-columns:repeat(3,1fr)}
@@ -140,7 +149,7 @@
       </div>
     </div>
 
-    <!-- Extra task: weight sliders kept (but simple) -->
+    <!-- Weight sliders (now retroactive) -->
     <div class="weights">
       <span class="pill">
         <label for="wRough">Roughness</label>
@@ -164,8 +173,30 @@
       </span>
     </div>
     <div class="hint" style="margin-top:6px;">
-      Comfort = 100 – weighted penalties for roughness, noise, rain, and wind.
+      Comfort = 100 – weighted penalties for roughness, noise, rain, and wind. Changing weights now recomputes comfort for the whole session.
     </div>
+  </div>
+
+  <!-- Route comparison table (all sessions) -->
+  <div class="card">
+    <div class="k">Route comparison (all sessions)</div>
+    <div class="hint">
+      Each row is one recorded walk. Routes are sorted by average comfort using analysis stored in Firebase.
+      Click a row to open it.
+    </div>
+    <table style="margin-top:6px;">
+      <thead>
+        <tr>
+          <th>Route</th>
+          <th class="num">Avg comfort</th>
+          <th class="num">Good / OK / Low</th>
+          <th class="num">Samples</th>
+        </tr>
+      </thead>
+      <tbody id="routeTableBody">
+        <tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="tabs">
@@ -231,6 +262,8 @@
   const accVal      = document.getElementById('accVal');
   const statusEl    = document.getElementById('status');
   const shareBtn    = document.getElementById('shareBtn');
+
+  const routeTableBody = document.getElementById('routeTableBody');
 
   const sCountEl    = document.getElementById('sCount');
   const comfortEl   = document.getElementById('comfort');
@@ -332,7 +365,7 @@
     chart.update('none');
   }
 
-  // Comfort weights
+  // Comfort weights (global)
   const weights = { rough:1.0, noise:1.0, rain:1.0, wind:1.0 };
   function syncWeights(){
     weights.rough = parseFloat(wRoughInput.value);
@@ -343,12 +376,14 @@
     wNoiseVal.textContent = weights.noise.toFixed(1);
     wRainVal.textContent  = weights.rain.toFixed(1);
     wWindVal.textContent  = weights.wind.toFixed(1);
+
+    // NEW: retroactively recompute whole session when sliders change
+    recomputeSessionSummary();
   }
   [wRoughInput,wNoiseInput,wRainInput,wWindInput].forEach(inp=>inp.addEventListener('input', syncWeights));
   syncWeights();
 
-  // Comfort scoring
-  let lastAmagVals=[];
+  // Rolling std helper (used live + in recompute)
   function rollStdPush(arr,val,win=20){
     if(val==null) return 0;
     arr.push(val); if(arr.length>win) arr.shift();
@@ -356,12 +391,15 @@
     const v=arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
     return Math.sqrt(v);
   }
+  let lastAmagVals=[];   // live window (for immediate per-row comfort display)
+
+  // Comfort scoring
   function comfortParts(aStd,dbfs,precip,wind){
-    const pRoughBase = clamp((aStd||0)*12,0,40);
-    const baseDb=(dbfs!=null?dbfs:-50);
-    const pNoiseBase = clamp((baseDb+60)*0.8,0,25);
-    const pRainBase  = clamp((precip||0)*10,0,20);
-    const pWindBase  = clamp((wind||0)*2,0,15);
+    const pRoughBase = clamp((aStd || 0) * 12, 0, 40);
+    const baseDb     = (dbfs != null ? dbfs : -50);
+    const pNoiseBase = clamp((baseDb + 60) * 0.8, 0, 25);
+    const pRainBase  = clamp((precip || 0) * 10, 0, 20);
+    const pWindBase  = clamp((wind   || 0) * 2, 0, 15);
 
     const pRough = pRoughBase * weights.rough;
     const pNoise = pNoiseBase * weights.noise;
@@ -372,11 +410,19 @@
     return {score,pRough,pNoise,pRain,pWind};
   }
 
-  // Stats / summary (still written to Firebase)
+  function updateComfortUI(parts){
+    comfortEl.textContent=parts.score;
+    comfortBadge.textContent = parts.score>=70?'Good':parts.score>=50?'OK':'Low';
+    comfortBadge.className='badge ' + (parts.score>=70?'ok':parts.score>=50?'warn':'err');
+    comfortBreak.textContent=`penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
+  }
+
+  // Stats / summary + retro cache
   let currentSessionId=null;
   let stats=null;
   let lastSummaryWrite=0;
   const SUMMARY_MIN_INTERVAL=5000; // ms
+  let sessionRows=[];              // NEW: cache of all readings for current session
 
   async function writeSummary(){
     if (!currentSessionId || !stats) return;
@@ -411,22 +457,66 @@
       : '—';
   }
 
-  function updateStats(row, parts){
-    if (!stats || !currentSessionId) return;
-    stats.n++;
-    stats.sumComfort += parts.score;
-    if (parts.score>=70) stats.nGood++;
-    else if (parts.score>=50) stats.nOk++;
-    else stats.nLow++;
+  // NEW: retroactive recompute using sessionRows + current weights
+  function recomputeSessionSummary(){
+    if (!currentSessionId || !sessionRows.length){
+      stats = null;
+      sessAnalysisEl.textContent = '—';
+      return;
+    }
 
-    stats.maxRoughPenalty = Math.max(stats.maxRoughPenalty, parts.pRough);
-    stats.maxNoisePenalty = Math.max(stats.maxNoisePenalty, parts.pNoise);
-    stats.maxRainPenalty  = Math.max(stats.maxRainPenalty,  parts.pRain);
-    stats.maxWindPenalty  = Math.max(stats.maxWindPenalty,  parts.pWind);
+    stats = {
+      n:0, sumComfort:0,
+      nGood:0, nOk:0, nLow:0,
+      maxRoughPenalty:0,
+      maxNoisePenalty:0,
+      maxRainPenalty:0,
+      maxWindPenalty:0,
+      firstTs:null,
+      lastTs:null
+    };
 
-    const t = row.timestamp_ms ? +row.timestamp_ms : Date.now();
-    if (stats.firstTs == null) stats.firstTs = t;
-    stats.lastTs = t;
+    const win=[]; // local accel window for std
+    let lastParts=null;
+
+    for (const r of sessionRows){
+      const aTot = num(r.a_total);
+      const aStd = rollStdPush(win,aTot,20);
+      const db   = num(r.db_smooth!=null ? r.db_smooth : r.dbfs);
+      const precip = num(r.w_precip_mm);
+      const wind   = num(r.w_wind_mps);
+
+      const parts = comfortParts(aStd, db, precip, wind);
+      lastParts = parts;
+
+      stats.n++;
+      stats.sumComfort += parts.score;
+      if (parts.score>=70) stats.nGood++;
+      else if (parts.score>=50) stats.nOk++;
+      else stats.nLow++;
+
+      stats.maxRoughPenalty = Math.max(stats.maxRoughPenalty, parts.pRough);
+      stats.maxNoisePenalty = Math.max(stats.maxNoisePenalty, parts.pNoise);
+      stats.maxRainPenalty  = Math.max(stats.maxRainPenalty,  parts.pRain);
+      stats.maxWindPenalty  = Math.max(stats.maxWindPenalty,  parts.pWind);
+
+      const t = r.timestamp_ms ? +r.timestamp_ms : Date.now();
+      if (stats.firstTs == null) stats.firstTs = t;
+      stats.lastTs = t;
+    }
+
+    if (lastParts){
+      updateComfortUI(lastParts);
+    }
+
+    // local summary text
+    const avgComfort = stats.n ? (stats.sumComfort / stats.n) : null;
+    const pGood = stats.n ? (stats.nGood*100/stats.n).toFixed(1) : '0.0';
+    const pOk   = stats.n ? (stats.nOk*100/stats.n).toFixed(1)   : '0.0';
+    const pLow  = stats.n ? (stats.nLow*100/stats.n).toFixed(1)  : '0.0';
+    sessAnalysisEl.textContent = avgComfort!=null
+      ? `avg ${avgComfort.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`
+      : '—';
 
     const now = Date.now();
     if (now - lastSummaryWrite > SUMMARY_MIN_INTERVAL){
@@ -435,8 +525,11 @@
     }
   }
 
-  // Feed each reading row
+  // Feed each reading row (live)
   function feedRow(r){
+    // cache for retro recompute
+    sessionRows.push(r);
+
     const aTot=num(r.a_total), db=num(r.db_smooth!=null?r.db_smooth:r.dbfs);
     const spd=num(r.speed_mps), tC=num(r.w_temp_c), wMps=num(r.w_wind_mps), rain=num(r.w_precip_mm);
 
@@ -448,21 +541,17 @@
     if(wMps!=null) windEl.textContent=wMps.toFixed(1);
     if(rain!=null) rainEl.textContent=rain.toFixed(2);
 
+    // live comfort (uses its own rolling window)
     const std=rollStdPush(lastAmagVals,aTot,20);
     const parts=comfortParts(std,db,rain,wMps);
-    comfortEl.textContent=parts.score;
-    comfortBadge.textContent = parts.score>=70?'Good':parts.score>=50?'OK':'Low';
-    comfortBadge.className='badge ' + (parts.score>=70?'ok':parts.score>=50?'warn':'err');
-    comfortBreak.textContent=`penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
-
-    const col = parts.score>=70 ? '#1abc9c' : parts.score>=50 ? '#f1c40f' : '#e74c3c';
-    marker.setStyle({fillColor:col, color:'#fff'});
-
-    updateStats(r, parts);
+    updateComfortUI(parts);
 
     const latlng=goodCoord(r);
     if(latlng){
       lastLatLng=latlng; track.addLatLng(latlng); marker.setLatLng(latlng);
+      const col = parts.score>=70 ? '#1abc9c' : parts.score>=50 ? '#f1c40f' : '#e74c3c';
+      marker.setStyle({fillColor:col, color:'#fff'});
+
       if(!gotFirstFix){
         gotFirstFix=true;
         map.setView(latlng,16);
@@ -481,6 +570,9 @@
     pushChart(accelChart,lbl,aTot);
     pushChart(noiseChart,lbl,db);
     sCountEl.textContent=String((+sCountEl.textContent||0)+1);
+
+    // recompute whole session stats with new row + current weights
+    recomputeSessionSummary();
   }
 
   // Firebase listening
@@ -488,6 +580,7 @@
 
   async function loadSessions(){
     sessionSel.innerHTML='';
+    routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
     statusEl.textContent='Loading sessions…';
     log('Loading sessions from /public/sessions');
 
@@ -496,6 +589,7 @@
       if (!snap.exists()){
         statusEl.textContent='No sessions found under /public/sessions';
         log('No sessions found. Is the logger writing to public/sessions/?','warn');
+        routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes found yet. Record a walk with the logger.</td></tr>';
         return;
       }
 
@@ -512,6 +606,7 @@
       sessions.sort((a,b)=>b.started-a.started);
       log(`Found ${sessions.length} sessions.`,'ok');
 
+      // Dropdown options
       sessions.forEach((s,i)=>{
         const opt=document.createElement('option');
         const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
@@ -530,6 +625,78 @@
         sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
         statusEl.textContent='Pick a session and tap Listen';
       }
+
+      // Route comparison table
+      routeTableBody.innerHTML='';
+      if(!sessions.length){
+        const tr=document.createElement('tr');
+        tr.innerHTML='<td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes found yet. Record a walk with the logger.</td>';
+        routeTableBody.appendChild(tr);
+      }else{
+        const summaries = sessions.map(s=>{
+          const a=s.analysis;
+          const n=a?.n ?? null;
+          const avg=(a && typeof a.avgComfort==='number') ? a.avgComfort : null;
+          const nGood=a?.nGood ?? 0;
+          const nOk=a?.nOk ?? 0;
+          const nLow=a?.nLow ?? 0;
+          const label=s.meta.routeLabel || (s.started? `Walk ${new Date(s.started).toISOString().replace('T',' ').slice(0,16)}` : s.id);
+          return {id:s.id,label,started:s.started,avg,n,nGood,nOk,nLow};
+        });
+
+        // sort by avg comfort desc, then newest
+        summaries.sort((a,b)=>{
+          if(a.avg==null && b.avg==null) return b.started-a.started;
+          if(a.avg==null) return 1;
+          if(b.avg==null) return -1;
+          return b.avg-a.avg;
+        });
+
+        summaries.forEach(sum=>{
+          const tr=document.createElement('tr');
+          tr.className='clickable';
+          tr.addEventListener('click',()=>{
+            sessionSel.value=sum.id;
+            listenSession(sum.id);
+            window.scrollTo({top:0,behavior:'smooth'});
+          });
+
+          const tdRoute=document.createElement('td');
+          tdRoute.textContent=sum.label;
+
+          const tdAvg=document.createElement('td');
+          tdAvg.className='num';
+          if(sum.avg==null){
+            tdAvg.textContent='—';
+            tdAvg.classList.add('hint');
+          }else{
+            tdAvg.textContent=sum.avg.toFixed(1);
+            tdAvg.classList.add(sum.avg>=70?'ok':sum.avg>=50?'warn':'err');
+          }
+
+          const tdDist=document.createElement('td');
+          tdDist.className='num';
+          if(sum.n && sum.avg!=null){
+            const pG=(sum.nGood*100/sum.n).toFixed(0);
+            const pO=(sum.nOk*100/sum.n).toFixed(0);
+            const pL=(sum.nLow*100/sum.n).toFixed(0);
+            tdDist.textContent=`${pG}% / ${pO}% / ${pL}%`;
+          }else{
+            tdDist.textContent='—';
+            tdDist.classList.add('hint');
+          }
+
+          const tdN=document.createElement('td');
+          tdN.className='num';
+          tdN.textContent = sum.n!=null ? String(sum.n) : '—';
+
+          tr.appendChild(tdRoute);
+          tr.appendChild(tdAvg);
+          tr.appendChild(tdDist);
+          tr.appendChild(tdN);
+          routeTableBody.appendChild(tr);
+        });
+      }
     }catch(e){
       statusEl.textContent='Error loading sessions';
       log('Error loading sessions: '+e.message,'err');
@@ -546,10 +713,12 @@
     marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
     gotFirstFix=false; lastLatLng=null; skippedAcc=0; skippedBad=0;
     skipAccEl.textContent='0'; skipBadEl.textContent='0';
-    sCountEl.textContent='0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
+    sCountEl.textContent='0';
+    comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
     lastAmagVals.length=0; sessAnalysisEl.textContent='—';
     recenterBtn.disabled=true;
 
+    // reset stats + retro cache
     stats = {
       n:0, sumComfort:0,
       nGood:0, nOk:0, nLow:0,
@@ -561,6 +730,7 @@
       lastTs:null
     };
     lastSummaryWrite=0;
+    sessionRows = [];
 
     const path=`public/sessions/${sessionId}/readings`;
     const readingsRef = ref(db, path);
