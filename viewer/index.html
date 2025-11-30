@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Calm Strider — Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root{
+    --bg:#0b1320; --card:#121a33; --ink:#e9eef6; --mut:#a8b3cf; --line:#1f2a4a;
+    --accent:#5bc0ff; --ok:#6df0a8; --warn:#ffd580; --err:#ff8797;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{position:sticky;top:0;z-index:20;background:#111a2e;padding:10px 14px;
+    box-shadow:0 2px 12px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center;justify-content:space-between}
+  h1{font-size:17px;margin:0;font-weight:700}
+  .sub{font-size:12px;color:var(--mut)}
+  main{max-width:1200px;margin:0 auto;padding:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  select,button,input[type="range"]{
+    appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
+    padding:8px 10px;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px}
+  button[disabled]{opacity:.6;cursor:not-allowed}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+    border:1px solid var(--line);background:#0f1730;font-size:12px}
+  .statgrid{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px}
+  .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .k{font-size:11px;color:var(--mut)}
+  .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+  #map{height:420px;border-radius:12px}
+  canvas{background:#0f1730;border-radius:12px;border:1px solid var(--line)}
+  .tabs{display:flex;gap:8px;margin:10px 0}
+  .tab{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#0f1730;cursor:pointer;font-weight:600}
+  .tab.active{outline:2px solid #2b3c67}
+  .section{display:none}
+  .section.active{display:block}
+  .row{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
+  .log{max-height:220px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
+  .hint{font-size:12px;color:var(--mut)}
+  .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .right{margin-left:auto}
+  @media(max-width:1020px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(3,1fr)} #map{height:360px} }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>📊 Calm Strider — Viewer</h1>
+    <div class="sub">View sessions stored in Firebase: map, charts, comfort & weather</div>
+  </div>
+  <div class="flex">
+    <button id="shareBtn">Share</button>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <div class="controls">
+      <strong>Session:</strong>
+      <select id="sessionSel"></select>
+      <button id="listenBtn">Listen live</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <button id="recenterBtn" disabled>Recenter map</button>
+      <span class="pill">Auto-follow <input id="followChk" type="checkbox" checked/></span>
+      <span class="pill">Accuracy max: <span id="accVal">150</span> m <input id="accRange" type="range" min="10" max="300" value="150" step="5" /></span>
+      <span id="status" class="hint right"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="statgrid">
+      <div class="stat"><div class="k">Samples</div><div class="v" id="sCount">0</div></div>
+      <div class="stat"><div class="k">Comfort</div>
+        <div class="v"><span id="comfort">—</span> <span id="comfortBadge" class="badge">—</span></div>
+        <div class="hint" id="comfortBreak"></div>
+      </div>
+      <div class="stat"><div class="k">Speed m/s</div><div class="v" id="spd">—</div></div>
+      <div class="stat"><div class="k">Accel |a|</div><div class="v" id="amag">—</div></div>
+      <div class="stat"><div class="k">Noise dBFS</div><div class="v" id="noise">—</div><div class="hint" id="noiseHint"></div></div>
+      <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
+      <div class="stat"><div class="k">Wind m/s · Rain mm/h</div><div class="v"><span id="wind">—</span> · <span id="rain">—</span></div></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="map">Map</div>
+    <div class="tab" data-tab="charts">Charts</div>
+    <div class="tab" data-tab="log">Log</div>
+  </div>
+
+  <div class="row section active" id="sec-map">
+    <div class="card"><div id="map"></div></div>
+    <div class="card">
+      <div class="k">Last point</div><div class="v" id="lastPoint">—</div>
+      <div style="height:10px"></div>
+      <div class="k">Session meta</div><div class="v" id="sessMeta">—</div>
+      <div style="height:10px"></div>
+      <div class="k">Skipped (accuracy)</div><div class="v" id="skipAcc">0</div>
+      <div class="k">Skipped (invalid coords)</div><div class="v" id="skipBad">0</div>
+    </div>
+  </div>
+
+  <div class="row section" id="sec-charts">
+    <div class="card"><canvas id="chartAccel" height="200"></canvas></div>
+    <div class="card"><canvas id="chartNoise" height="200"></canvas></div>
+  </div>
+
+  <div class="section" id="sec-log">
+    <div class="card">
+      <div class="k">Event log</div>
+      <pre id="log" class="log"></pre>
+    </div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+  import { getDatabase, ref, child, get, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
+    authDomain: "urban-app-be1f9.firebaseapp.com",
+    databaseURL: "https://urban-app-be1f9-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "urban-app-be1f9",
+    appId: "1:297008657169:web:e9a9aadf8332b71a6392b0"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db  = getDatabase(app);
+
+  // UI refs
+  const sessionSel  = document.getElementById('sessionSel');
+  const listenBtn   = document.getElementById('listenBtn');
+  const stopBtn     = document.getElementById('stopBtn');
+  const recenterBtn = document.getElementById('recenterBtn');
+  const followChk   = document.getElementById('followChk');
+  const accRange    = document.getElementById('accRange');
+  const accVal      = document.getElementById('accVal');
+  const statusEl    = document.getElementById('status');
+  const shareBtn    = document.getElementById('shareBtn');
+
+  const sCountEl    = document.getElementById('sCount');
+  const comfortEl   = document.getElementById('comfort');
+  const comfortBadge= document.getElementById('comfortBadge');
+  const comfortBreak= document.getElementById('comfortBreak');
+  const spdEl       = document.getElementById('spd');
+  const amagEl      = document.getElementById('amag');
+  const noiseEl     = document.getElementById('noise');
+  const noiseHint   = document.getElementById('noiseHint');
+  const tempEl      = document.getElementById('temp');
+  const windEl      = document.getElementById('wind');
+  const rainEl      = document.getElementById('rain');
+  const lastPointEl = document.getElementById('lastPoint');
+  const sessMetaEl  = document.getElementById('sessMeta');
+  const skipAccEl   = document.getElementById('skipAcc');
+  const skipBadEl   = document.getElementById('skipBad');
+  const logEl       = document.getElementById('log');
+
+  const tabs = document.querySelectorAll('.tab');
+  const secMap   = document.getElementById('sec-map');
+  const secCharts= document.getElementById('sec-charts');
+  const secLog   = document.getElementById('sec-log');
+
+  // tabs
+  tabs.forEach(t=>t.addEventListener('click', ()=>{
+    tabs.forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    const id=t.dataset.tab;
+    [secMap,secCharts,secLog].forEach(s=>s.classList.remove('active'));
+    ({map:secMap,charts:secCharts,log:secLog}[id]).classList.add('active');
+    if (id==='map') setTimeout(()=>map.invalidateSize(), 50);
+  }));
+
+  const log = (msg, cls='')=>{
+    const line=document.createElement('div');
+    line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+    if(cls) line.className=cls;
+    logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight;
+  };
+  const num = v => (v===null||v===undefined||v==='') ? null : (Number.isFinite(+v)? +v : null);
+  const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
+
+  // Map
+  const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603],13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+  let track=L.polyline([], {color:'#5bc0ff',weight:4,opacity:.95}).addTo(map);
+  let marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
+  let gotFirstFix=false, lastLatLng=null, AUTO_FOLLOW=true;
+  let ACCURACY_MAX=parseInt(accRange.value,10);
+  let skippedAcc=0, skippedBad=0;
+
+  accRange.addEventListener('input',()=>{ ACCURACY_MAX=parseInt(accRange.value,10); accVal.textContent=ACCURACY_MAX; });
+  followChk.addEventListener('change',()=>{ AUTO_FOLLOW=followChk.checked; });
+
+  function goodCoord(r){
+    const lat=num(r.lat), lon=num(r.lon);
+    if(lat==null || lon==null || Math.abs(lat)>90 || Math.abs(lon)>180){ skippedBad++; skipBadEl.textContent=String(skippedBad); return null; }
+    const acc=num(r.accuracy_m);
+    if(acc!=null && acc>ACCURACY_MAX){ skippedAcc++; skipAccEl.textContent=String(skippedAcc); return null; }
+    return [lat,lon];
+  }
+
+  // Charts
+  const accelChart=new Chart(document.getElementById('chartAccel'),{
+    type:'line', data:{labels:[],datasets:[{label:'|a| m/s²',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
+    options:{animation:false,plugins:{legend:{display:false}},scales:{x:{display:false}}}
+  });
+  const noiseChart=new Chart(document.getElementById('chartNoise'),{
+    type:'line', data:{labels:[],datasets:[{label:'dBFS',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
+    options:{animation:false,plugins:{legend:{display:false}},scales:{x:{display:false}}}
+  });
+  function pushChart(chart,label,val){
+    if(val==null) return;
+    const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val);
+    if(d.labels.length>800){ d.labels.shift(); d.datasets[0].data.shift(); }
+    chart.update('none');
+  }
+
+  // Comfort
+  let lastAmagVals=[];
+  function rollStdPush(arr,val,win=20){
+    if(val==null) return 0;
+    arr.push(val); if(arr.length>win) arr.shift();
+    const n=arr.length, mean=arr.reduce((a,b)=>a+b,0)/n;
+    const v=arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
+    return Math.sqrt(v);
+  }
+  function comfortParts(aStd,dbfs,precip,wind){
+    const pRough=clamp((aStd||0)*12,0,40);
+    const baseDb=(dbfs!=null?dbfs:-50);
+    const pNoise=clamp((baseDb+60)*0.8,0,25);
+    const pRain =clamp((precip||0)*10,0,20);
+    const pWind =clamp((wind||0)*2,0,15);
+    const score =clamp(Math.round(100-pRough-pNoise-pRain-pWind),0,100);
+    return {score,pRough,pNoise,pRain,pWind};
+  }
+
+  // feedRow from Firebase
+  function feedRow(r){
+    const aTot=num(r.a_total), db=num(r.db_smooth!=null?r.db_smooth:r.dbfs);
+    const spd=num(r.speed_mps), tC=num(r.w_temp_c), wMps=num(r.w_wind_mps), rain=num(r.w_precip_mm);
+
+    if(spd!=null) spdEl.textContent=spd.toFixed(2);
+    if(aTot!=null) amagEl.textContent=aTot.toFixed(2);
+    if(db!=null){ noiseEl.textContent=db.toFixed(1); noiseHint.textContent=''; }
+    else { noiseEl.textContent='—'; noiseHint.textContent='No mic data in this session'; }
+    if(tC!=null) tempEl.textContent=tC.toFixed(1);
+    if(wMps!=null) windEl.textContent=wMps.toFixed(1);
+    if(rain!=null) rainEl.textContent=rain.toFixed(2);
+
+    const std=rollStdPush(lastAmagVals,aTot,20);
+    const parts=comfortParts(std,db,rain,wMps);
+    comfortEl.textContent=parts.score;
+    comfortBadge.textContent = parts.score>=70?'Good':parts.score>=50?'OK':'Low';
+    comfortBadge.className='badge ' + (parts.score>=70?'ok':parts.score>=50?'warn':'err');
+    comfortBreak.textContent=`penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
+
+    const latlng=goodCoord(r);
+    if(latlng){
+      lastLatLng=latlng; track.addLatLng(latlng); marker.setLatLng(latlng);
+      if(!gotFirstFix){ gotFirstFix=true; map.setView(latlng,16); recenterBtn.disabled=true; log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`,'ok'); }
+      else if(AUTO_FOLLOW){ map.panTo(latlng,{animate:false}); }
+      lastPointEl.textContent=`${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)} (acc≤${ACCURACY_MAX}m)`;
+    }else{
+      const lat=r.lat ?? 'null', lon=r.lon ?? 'null', acc=r.accuracy_m ?? 'null';
+      log(`skip row: lat=${lat} lon=${lon} acc=${acc}`,'warn');
+    }
+
+    const lbl=r.timestamp_ms? new Date(+r.timestamp_ms).toLocaleTimeString():'';
+    pushChart(accelChart,lbl,aTot);
+    pushChart(noiseChart,lbl,db);
+    sCountEl.textContent=String((+sCountEl.textContent||0)+1);
+  }
+
+  // Firebase listening
+  let detach=null;
+  async function loadSessions(){
+    sessionSel.innerHTML='';
+    const snap=await get(query(ref(db,'public/sessions'),orderByKey(),limitToLast(40)));
+    const sessions=[];
+    snap.forEach(ch=>{
+      const id=ch.key; const meta=ch.val()?.meta||{}; const started=meta.startedAt||0;
+      sessions.push({id,started,meta});
+    });
+    sessions.sort((a,b)=>b.started-a.started);
+    sessions.forEach((s,i)=>{
+      const opt=document.createElement('option');
+      const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
+      opt.value=s.id; opt.textContent=`${dt} — ${s.id.slice(0,8)}…`; if(i===0) opt.selected=true;
+      sessionSel.appendChild(opt);
+    });
+    if(sessions.length){
+      sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
+      statusEl.textContent='Pick a session and tap Listen';
+    }else{
+      statusEl.textContent='No sessions found';
+    }
+
+    // deep link
+    const sid=new URLSearchParams(location.search).get('session');
+    if(sid){
+      const opt=[...sessionSel.options].find(o=>o.value===sid);
+      if(opt){ sessionSel.value=sid; listenSession(sid); }
+    }
+  }
+
+  async function listenSession(sessionId){
+    if(detach){ detach(); detach=null; }
+    // reset visuals
+    track.remove(); marker.remove();
+    track=L.polyline([], {color:'#5bc0ff',weight:4,opacity:.95}).addTo(map);
+    marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
+    gotFirstFix=false; lastLatLng=null; skippedAcc=0; skippedBad=0; skipAccEl.textContent='0'; skipBadEl.textContent='0';
+    sCountEl.textContent='0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
+    lastAmagVals.length=0;
+
+    const path=`public/sessions/${sessionId}/readings`;
+    const q=query(ref(db,path),orderByKey(),limitToLast(800));
+    const handler=snap=>feedRow(snap.val());
+    onChildAdded(q,handler);
+    detach=()=> off(q,'child_added',handler);
+
+    statusEl.textContent=`Listening: ${sessionId}`;
+    stopBtn.disabled=false; listenBtn.disabled=true; sessionSel.disabled=true;
+    setTimeout(()=>map.invalidateSize(),120);
+    log(`Listening to /${path}`,'ok');
+
+    const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
+    if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
+  }
+
+  function stopListening(){
+    if(detach){ detach(); detach=null; log('Stopped listening','warn'); }
+    stopBtn.disabled=true; listenBtn.disabled=false; sessionSel.disabled=false; statusEl.textContent='';
+  }
+
+  // wire up
+  listenBtn.addEventListener('click',()=> listenSession(sessionSel.value));
+  stopBtn.addEventListener('click',stopListening);
+  recenterBtn.addEventListener('click',()=>{ if(lastLatLng){ map.setView(lastLatLng,16); map.invalidateSize(); }});
+  shareBtn.addEventListener('click',async()=>{
+    const sid=sessionSel.value;
+    if(!sid){ log('No session selected','warn'); return; }
+    const url=`${location.origin}${location.pathname}?session=${encodeURIComponent(sid)}`;
+    try{ await navigator.clipboard.writeText(url); log('Share link copied: '+url,'ok'); }catch(e){ log('Copy failed; URL: '+url,'warn'); alert(url); }
+  });
+
+  accVal.textContent=accRange.value;
+  loadSessions().catch(e=>log('Error loading sessions: '+e.message,'err'));
+</script>
+</body>
+</html>
