@@ -82,26 +82,22 @@
   input[type="range"]{width:90px;background:transparent}
 
   /* Table for route comparison */
-
   table{
     border-collapse:collapse;
     width:100%;
     margin-top:6px;
     font-size:12px;
   }
-
   th,td{
     padding:6px 8px;
     border-bottom:1px solid var(--line);
   }
-
   th{
     text-align:left;
     color:var(--mut);
     font-weight:600;
   }
 
-  /* numeric columns right-aligned with tabular digits */
   td:nth-child(2),
   td:nth-child(3),
   td.num{
@@ -172,7 +168,6 @@
       </div>
     </div>
 
-    <!-- weight sliders (unchanged) -->
     <div class="weights">
       <span class="pill">
         <label for="wRough">Roughness</label>
@@ -200,11 +195,11 @@
     </div>
   </div>
 
-  <!-- NEW: Route comparison table (all sessions) -->
+  <!-- Route comparison table -->
   <div class="card">
-    <div class="k">Route comparison (all sessions under <code>/public/sessions</code>)</div>
+    <div class="k">Route comparison (this user only)</div>
     <div class="hint">
-      Each row is one recorded walk. Label comes from <code>meta.routeLabel</code> (set in the logger).
+      Each row is one recorded walk (sessions under <code>/public/sessions</code> where <code>meta.ownerUid</code> matches the signed-in user).
       Click a row to jump to that session.
     </div>
     <table>
@@ -264,6 +259,7 @@
     getDatabase, ref, child, get,
     onChildAdded, off, set
   } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
@@ -274,8 +270,17 @@
   };
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
-
+  const auth = getAuth(app);
   const SESSIONS_ROOT = 'public/sessions';
+
+  let authUid = null;
+  async function ensureAuth() {
+    if (authUid) return authUid;
+    const cred = await signInAnonymously(auth);
+    authUid = cred.user.uid;
+    console.log('[viewer] signed in as', authUid);
+    return authUid;
+  }
 
   // --- UI refs ---
   const sessionSel  = document.getElementById('sessionSel');
@@ -305,7 +310,6 @@
   const skipAccEl   = document.getElementById('skipAcc');
   const skipBadEl   = document.getElementById('skipBad');
   const logEl       = document.getElementById('log');
-
   const routeTableBody = document.getElementById('routeTableBody');
 
   const tabs = document.querySelectorAll('.tab');
@@ -313,7 +317,6 @@
   const secCharts= document.getElementById('sec-charts');
   const secLog   = document.getElementById('sec-log');
 
-  // weights
   const wRoughInput = document.getElementById('wRough');
   const wNoiseInput = document.getElementById('wNoise');
   const wRainInput  = document.getElementById('wRain');
@@ -544,10 +547,22 @@
   let detach=null;
 
   async function loadSessions(){
-    sessionSel.innerHTML='';
-    routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
-    statusEl.textContent=`Loading sessions from /${SESSIONS_ROOT}…`;
-    log(`Loading sessions from /${SESSIONS_ROOT}`);
+    sessionSel.innerHTML = '';
+    routeTableBody.innerHTML =
+      '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
+    statusEl.textContent = 'Loading sessions…';
+
+    let uid;
+    try {
+      uid = await ensureAuth();
+    } catch (e) {
+      statusEl.textContent = 'Auth failed; cannot load sessions';
+      log('Auth error: ' + e.message, 'err');
+      return;
+    }
+
+    statusEl.textContent = `Loading sessions from /${SESSIONS_ROOT}…`;
+    log(`Loading sessions from /${SESSIONS_ROOT} for uid=${uid}`, 'ok');
 
     try{
       const rootRef = ref(db, SESSIONS_ROOT);
@@ -556,7 +571,8 @@
       if (!snap.exists()){
         statusEl.textContent=`No sessions found under /${SESSIONS_ROOT}`;
         log(`No sessions found under /${SESSIONS_ROOT}. Is the logger writing there?`,'warn');
-        routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet. Record a walk with the logger.</td></tr>';
+        routeTableBody.innerHTML =
+          '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet. Record a walk with the logger.</td></tr>';
         return;
       }
 
@@ -564,32 +580,41 @@
       console.log('[viewer] raw sessions value:', rawVal);
       log(`Got snapshot at /${SESSIONS_ROOT}; type=${typeof rawVal}`,'ok');
 
-      const sessions=[];
-      snap.forEach(ch=>{
-        const id=ch.key;
-        const val=ch.val() || {};
+      const sessions = [];
+      snap.forEach(ch => {
+        const id   = ch.key;
+        const val  = ch.val() || {};
         const meta = val.meta || {};
         const analysis = val.analysis || null;
-        const started = meta.startedAt || 0;
+        const started  = meta.startedAt || 0;
+        const ownerUid = meta.ownerUid || null;
+
+        // filter per user (keep legacy sessions without ownerUid)
+        if (ownerUid && ownerUid !== uid) return;
 
         const label = meta.routeLabel || `Walk ${id.slice(0,6)}`;
-        sessions.push({id,started,meta,analysis,label});
+        sessions.push({ id, started, meta, analysis, label });
       });
 
       if (!sessions.length){
-        statusEl.textContent='No child nodes under /public/sessions';
-        log('Snapshot exists but contains no children. Check Firebase data browser.','warn');
-        routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet. Record a walk with the logger.</td></tr>';
+        statusEl.textContent = 'No sessions for this user';
+        log('Snapshot exists but no sessions match this uid (ownerUid).','warn');
+        routeTableBody.innerHTML =
+          '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet for this user. Record a walk with the logger.</td></tr>';
         return;
       }
 
       sessions.sort((a,b)=> (b.started||0)-(a.started||0));
       log(`Found ${sessions.length} sessions: ${sessions.map(s=>s.id).join(', ')}`,'ok');
 
-      // Dropdown (unchanged)
+      // Dropdown
+      sessionSel.innerHTML = '';
       sessions.forEach((s,i)=>{
         const opt=document.createElement('option');
-        const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
+        const dt=s.started
+          ? new Date(s.started).toISOString().replace('T',' ').slice(0,19)
+          : 'unknown';
+
         if (s.analysis && typeof s.analysis.avgComfort==='number'){
           opt.textContent = `${s.label} — avg ${s.analysis.avgComfort.toFixed(1)} · ${dt}`;
         } else {
@@ -601,11 +626,11 @@
       });
 
       if(sessions.length){
-        sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
-        statusEl.textContent='Pick a session and tap Listen';
+        sessMetaEl.textContent = JSON.stringify(sessions[0].meta||{},null,0);
+        statusEl.textContent   = 'Pick a session and tap Listen';
       }
 
-      // NEW: fill route comparison table
+      // Route comparison table
       routeTableBody.innerHTML = '';
       sessions.forEach(s=>{
         const tr=document.createElement('tr');
@@ -652,7 +677,8 @@
       statusEl.textContent='Error loading sessions';
       log('Error loading sessions: '+e.message,'err');
       log('If message is PERMISSION_DENIED, check Firebase rules for /public/sessions .read.','err');
-      routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Error loading routes. See Log tab.</td></tr>';
+      routeTableBody.innerHTML =
+        '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Error loading routes. See Log tab.</td></tr>';
     }
   }
 
