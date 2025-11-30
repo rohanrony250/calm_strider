@@ -2,36 +2,70 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Calm Strider — Live Dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Calm Strider — Live</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  :root { --bg:#0b1320; --card:#121a33; --ink:#e9eef6; --mut:#a8b3cf; --line:#1f2a4a; }
+  :root{
+    --bg:#0b1320; --card:#121a33; --ink:#e9eef6; --mut:#a8b3cf; --line:#1f2a4a;
+    --accent:#5bc0ff; --ok:#6df0a8; --warn:#ffd580; --err:#ff8797;
+  }
+  *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  header{position:sticky;top:0;z-index:10;background:#111a2e;padding:12px 18px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
-  h1{font-size:18px;margin:0}
-  main{max-width:1200px;margin:0 auto;padding:16px}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  header{position:sticky;top:0;z-index:20;background:#111a2e;padding:10px 14px;box-shadow:0 2px 12px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center;justify-content:space-between}
+  h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
+  .sub{font-size:12px;color:var(--mut)}
+  main{max-width:1200px;margin:0 auto;padding:14px}
+  .row{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
   .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  select,button{appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
-    padding:8px 10px;border-radius:10px;font-weight:600;cursor:pointer}
+  select,button,input[type="range"]{
+    appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
+    padding:8px 10px;border-radius:10px;font-weight:600;cursor:pointer
+  }
+  select{min-width:220px}
   button[disabled]{opacity:.6;cursor:not-allowed}
-  .statgrid{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px}
+  .pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:#0f1730;font-size:12px}
+  .statgrid{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:10px}
   .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-  .k{font-size:12px;color:var(--mut)}
+  .k{font-size:11px;color:var(--mut)}
   .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
   #map{height:420px;border-radius:12px}
   canvas{background:#0f1730;border-radius:12px;border:1px solid var(--line)}
-  .ok{color:#6df0a8} .warn{color:#ffd580} .err{color:#ff8797}
-  .log{max-height:160px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
-  @media (max-width:1000px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(2,1fr)} }
+  .tabs{display:flex;gap:8px;margin:10px 0}
+  .tab{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#0f1730;cursor:pointer;font-weight:600}
+  .tab.active{outline:2px solid #2b3c67}
+  .section{display:none}
+  .section.active{display:block}
+  .log{max-height:180px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
+  .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .grow{flex:1}
+  .right{margin-left:auto}
+  .hint{font-size:12px;color:var(--mut)}
+  .switch{display:inline-flex;align-items:center;gap:6px}
+  .switch input{width:42px}
+  @media (max-width:1020px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(3,1fr)} #map{height:360px} }
 </style>
 </head>
 <body>
-<header><h1>📊 Calm Strider — Live Dashboard</h1></header>
+<header>
+  <div>
+    <h1>📊 Calm Strider — Live</h1>
+    <div class="sub">Real-time map, charts & comfort score</div>
+  </div>
+  <div class="flex">
+    <button id="shareBtn" title="Copy share link">Share</button>
+    <button id="helpBtn" title="Help">Help</button>
+  </div>
+</header>
+
 <main>
 
+  <!-- Top Controls -->
   <div class="card">
     <div class="controls">
       <label>Session:
@@ -39,29 +73,62 @@
       </label>
       <button id="listenBtn">Listen live</button>
       <button id="stopBtn" disabled>Stop</button>
-      <span id="status" class="k"></span>
+      <button id="recenterBtn" disabled>Recenter map</button>
+      <span class="pill"><input id="followChk" type="checkbox" checked/> Auto-follow</span>
+      <span class="pill">Accuracy max: <span id="accVal">80</span> m <input id="accRange" type="range" min="10" max="200" value="80" step="5" /></span>
+      <span id="status" class="hint right"></span>
     </div>
-    <div class="statgrid" style="margin-top:10px">
+  </div>
+
+  <!-- Stats -->
+  <div class="card">
+    <div class="statgrid">
       <div class="stat"><div class="k">Samples</div><div class="v" id="sCount">0</div></div>
-      <div class="stat"><div class="k">Comfort score</div><div class="v" id="comfort">—</div></div>
+      <div class="stat"><div class="k">Comfort</div>
+        <div class="v"><span id="comfort">—</span> <span id="comfortBadge" class="badge">—</span></div>
+        <div class="hint" id="comfortBreak"></div>
+      </div>
       <div class="stat"><div class="k">Speed m/s</div><div class="v" id="spd">—</div></div>
       <div class="stat"><div class="k">Accel |a|</div><div class="v" id="amag">—</div></div>
       <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
+      <div class="stat"><div class="k">Wind m/s · Rain mm/h</div><div class="v"><span id="wind">—</span> · <span id="rain">—</span></div></div>
     </div>
   </div>
 
-  <div class="row">
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="map">Map</div>
+    <div class="tab" data-tab="charts">Charts</div>
+    <div class="tab" data-tab="log">Log</div>
+  </div>
+
+  <div class="row section active" id="sec-map">
     <div class="card"><div id="map"></div></div>
     <div class="card">
-      <canvas id="chartAccel" height="180"></canvas>
-      <div style="height:8px"></div>
-      <canvas id="chartNoise" height="120"></canvas>
+      <div class="hint">Tip: Toggle “Auto-follow” to keep the map centered while moving.</div>
+      <div style="height:6px"></div>
+      <div class="k">Last point</div>
+      <div class="v" id="lastPoint">—</div>
+      <div style="height:10px"></div>
+      <div class="k">Session</div>
+      <div class="v" id="sessMeta">—</div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="k">Log</div>
-    <pre id="log" class="log"></pre>
+  <div class="row section" id="sec-charts">
+    <div class="card">
+      <canvas id="chartAccel" height="200"></canvas>
+    </div>
+    <div class="card">
+      <canvas id="chartNoise" height="200"></canvas>
+    </div>
+  </div>
+
+  <div class="section" id="sec-log">
+    <div class="card">
+      <div class="k">Event log</div>
+      <pre id="log" class="log"></pre>
+    </div>
   </div>
 
 </main>
@@ -75,7 +142,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import { getDatabase, ref, child, get, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
-  // --- Your existing config ---
+  // --- Firebase config (same as logger) ---
   const firebaseConfig = {
     apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
     authDomain: "urban-app-be1f9.firebaseapp.com",
@@ -90,24 +157,62 @@
   const sessionSel = document.getElementById('sessionSel');
   const listenBtn  = document.getElementById('listenBtn');
   const stopBtn    = document.getElementById('stopBtn');
+  const recenterBtn= document.getElementById('recenterBtn');
+  const followChk  = document.getElementById('followChk');
+  const accRange   = document.getElementById('accRange');
+  const accVal     = document.getElementById('accVal');
   const statusEl   = document.getElementById('status');
+
   const sCountEl   = document.getElementById('sCount');
   const comfortEl  = document.getElementById('comfort');
+  const comfortBadge = document.getElementById('comfortBadge');
+  const comfortBreak = document.getElementById('comfortBreak');
   const spdEl      = document.getElementById('spd');
   const amagEl     = document.getElementById('amag');
   const tempEl     = document.getElementById('temp');
-  const logEl      = document.getElementById('log');
+  const windEl     = document.getElementById('wind');
+  const rainEl     = document.getElementById('rain');
+  const lastPointEl= document.getElementById('lastPoint');
+  const sessMetaEl = document.getElementById('sessMeta');
 
+  const logEl      = document.getElementById('log');
+  const shareBtn   = document.getElementById('shareBtn');
+  const helpBtn    = document.getElementById('helpBtn');
+
+  // Tabs
+  const tabs = document.querySelectorAll('.tab');
+  const secMap = document.getElementById('sec-map');
+  const secCharts = document.getElementById('sec-charts');
+  const secLog = document.getElementById('sec-log');
+  tabs.forEach(t=>t.addEventListener('click', ()=>{
+    tabs.forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    const id = t.dataset.tab;
+    [secMap, secCharts, secLog].forEach(s=>s.classList.remove('active'));
+    ({map:secMap, charts:secCharts, log:secLog}[id]).classList.add('active');
+    if (id==='map') setTimeout(()=>map.invalidateSize(), 50);
+  }));
+
+  // --- Logging helper ---
   const log = (msg, cls='')=>{
-    const line=document.createElement('div'); line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
-    if(cls) line.className=cls; logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight;
+    const line=document.createElement('div');
+    line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+    if (cls) line.className=cls;
+    logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
   };
 
   // --- Map ---
-  const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603], 14);
+  const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' }).addTo(map);
-  const track = L.polyline([], {color:'#5bc0ff', weight:4, opacity:.9}).addTo(map);
-  const marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
+  let track = L.polyline([], {color: '#5bc0ff', weight: 4, opacity:.95}).addTo(map);
+  let marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
+  let gotFirstFix = false;
+  let lastLatLng = null;
+  let AUTO_FOLLOW = true;
+  let ACCURACY_MAX = parseInt(accRange.value,10);
+
+  accRange.addEventListener('input', ()=>{ ACCURACY_MAX=parseInt(accRange.value,10); accVal.textContent=ACCURACY_MAX; });
+  followChk.addEventListener('change', ()=>{ AUTO_FOLLOW = followChk.checked; });
 
   // --- Charts ---
   const accelChart = new Chart(document.getElementById('chartAccel'),{
@@ -122,20 +227,50 @@
   });
 
   // --- State ---
-  let detach = null;                 // function to remove listener
+  let detach = null;            // unsubscribe fn
   let count = 0;
-  let lastAmagVals = [];             // for rolling std
-  const MAX_POINTS = 600;
+  let lastAmagVals = [];        // for rolling std
+  const MAX_POINTS = 800;
 
-  // Populate session dropdown with the latest 20
+  function num(v){ const n = typeof v==='string' ? parseFloat(v) : +v; return Number.isFinite(n) ? n : null; }
+  function goodCoord(r){
+    const lat = num(r.lat), lon = num(r.lon);
+    if (lat==null || lon==null) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    const acc = num(r.accuracy_m);
+    if (acc!=null && acc > ACCURACY_MAX) return null;
+    return [lat, lon];
+  }
+
+  // Comfort score & breakdown
+  function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
+  function comfortScoreParts(aStd, dbfs, precip, wind){
+    const pRough = clamp((aStd||0)*12, 0, 40);
+    const baseDb = (dbfs!=null ? dbfs : -50); // dbfs negative
+    const pNoise = clamp((baseDb + 60) * 0.8, 0, 25);
+    const pRain  = clamp((precip||0)*10, 0, 20);
+    const pWind  = clamp((wind||0)*2, 0, 15);
+    const score  = clamp(Math.round(100 - pRough - pNoise - pRain - pWind), 0, 100);
+    return { score, pRough, pNoise, pRain, pWind };
+  }
+  function rollStdPush(arr, val, win=20){
+    if(val==null) return 0;
+    arr.push(val); if(arr.length>win) arr.shift();
+    const n=arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n;
+    const v = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
+    return Math.sqrt(v);
+  }
+
+  // Sessions
   async function loadSessions(){
     sessionSel.innerHTML = '';
-    const snap = await get(query(ref(db,'public/sessions'), orderByKey(), limitToLast(20)));
+    const snap = await get(query(ref(db,'public/sessions'), orderByKey(), limitToLast(40)));
     const sessions = [];
     snap.forEach(ch => {
       const id = ch.key;
-      const started = ch.val()?.meta?.startedAt || 0;
-      sessions.push({ id, started });
+      const meta = ch.val()?.meta || {};
+      const started = meta.startedAt || 0;
+      sessions.push({ id, started, meta });
     });
     sessions.sort((a,b)=>b.started-a.started);
     sessions.forEach((s,i)=>{
@@ -145,59 +280,82 @@
       if(i===0) opt.selected = true;
       sessionSel.appendChild(opt);
     });
-    statusEl.textContent = sessions.length? 'Pick a session and click Listen' : 'No sessions found';
+    if (sessions.length){
+      sessMetaEl.textContent = JSON.stringify(sessions[0].meta || {}, null, 0);
+      statusEl.textContent = 'Pick a session and tap Listen';
+    } else {
+      statusEl.textContent = 'No sessions found';
+    }
+
+    // support ?session=ID deep link
+    const params = new URLSearchParams(location.search);
+    const sid = params.get('session');
+    if (sid){
+      const opt = [...sessionSel.options].find(o=>o.value===sid);
+      if (opt){ sessionSel.value = sid; listen(sid); }
+    }
   }
 
   function listen(sessionId){
-    if(detach){ detach(); detach=null; }
+    if (detach){ detach(); detach=null; }
+    // reset visuals
+    track.remove(); marker.remove();
+    track = L.polyline([], {color:'#5bc0ff', weight:4, opacity:.95}).addTo(map);
+    marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
+    gotFirstFix = false; lastLatLng = null; count = 0; lastAmagVals.length = 0;
+    sCountEl.textContent = '0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
+
     const q = query(ref(db, `public/sessions/${sessionId}/readings`), orderByKey(), limitToLast(MAX_POINTS));
     const handler = snap => onRow(snap.val());
     const unsub = onChildAdded(q, handler);
     detach = ()=> off(q, 'child_added', handler);
+
     statusEl.textContent = `Listening: ${sessionId}`;
-    stopBtn.disabled = false; listenBtn.disabled = true; sessionSel.disabled = true;
+    stopBtn.disabled = false; listenBtn.disabled = true; sessionSel.disabled = true; recenterBtn.disabled = true;
+    setTimeout(()=> map.invalidateSize(), 120);
+
+    // show meta
+    get(child(ref(db), `public/sessions/${sessionId}/meta`)).then(s=>{
+      if (s.exists()){ sessMetaEl.textContent = JSON.stringify(s.val(), null, 0); }
+    });
     log(`Listening to /public/sessions/${sessionId}/readings`, 'ok');
   }
 
   function stop(){
-    if(detach){ detach(); detach=null; log('Stopped listening','warn'); }
+    if (detach){ detach(); detach=null; log('Stopped listening','warn'); }
     stopBtn.disabled = true; listenBtn.disabled = false; sessionSel.disabled = false; statusEl.textContent = '';
+    recenterBtn.disabled = true;
   }
 
-  // Comfort score: 0..100 (higher better). Rolling std of |a| + noise + rain/wind.
-  function comfortScore(aStd, dbfs, precip, wind){
-    const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
-    const s = 100
-      - clamp(aStd*12,  0, 40)      // roughness
-      - clamp((dbfs+60)*0.8, 0, 25) // louder → worse (dbfs is negative)
-      - clamp((precip||0)*10, 0, 20)// rain penalty
-      - clamp((wind||0)*2,   0, 15);// wind penalty
-    return clamp(Math.round(s), 0, 100);
+  // Charts helper
+  function pushChart(chart,label,val){
+    if(val==null) return;
+    const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val);
+    if(d.labels.length>MAX_POINTS){ d.labels.shift(); d.datasets[0].data.shift(); }
+    chart.update('none');
   }
 
-  function rollStdPush(arr, val, win=20){
-    if(val==null) return 0;
-    arr.push(val); if(arr.length>win) arr.shift();
-    const n=arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n;
-    const v = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
-    return Math.sqrt(v);
-  }
-
+  // On each row
   function onRow(r){
-    count++; sCountEl.textContent = count.toString();
+    count++; sCountEl.textContent = String(count);
+
     // Stats tiles
     if (r.speed_mps!=null) spdEl.textContent = (+r.speed_mps).toFixed(2);
     if (r.a_total!=null)   amagEl.textContent = (+r.a_total).toFixed(2);
     if (r.w_temp_c!=null)  tempEl.textContent = (+r.w_temp_c).toFixed(1);
+    if (r.w_wind_mps!=null)windEl.textContent = (+r.w_wind_mps).toFixed(1);
+    if (r.w_precip_mm!=null)rainEl.textContent= (+r.w_precip_mm).toFixed(2);
 
     // Comfort
     const std = rollStdPush(lastAmagVals, r.a_total ?? null, 20);
-    const score = comfortScore(std, r.db_smooth ?? r.dbfs ?? -50, r.w_precip_mm, r.w_wind_mps);
-    comfortEl.textContent = score;
-    comfortEl.className = score>=70 ? 'ok' : score>=50 ? 'warn' : 'err';
+    const parts = comfortScoreParts(std, r.db_smooth ?? r.dbfs ?? -50, r.w_precip_mm, r.w_wind_mps);
+    comfortEl.textContent = parts.score;
+    comfortBadge.textContent = parts.score>=70 ? 'Good' : parts.score>=50 ? 'OK' : 'Low';
+    comfortBadge.className = 'badge ' + (parts.score>=70 ? 'ok' : parts.score>=50 ? 'warn' : 'err');
+    comfortBreak.textContent = `penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
 
-    // Actuation emulation: vibrate/beep when uncomfortable
-    if (score < 50) {
+    // Actuation emulation (buzz/beep when uncomfortable)
+    if (parts.score < 50) {
       if (navigator.vibrate) navigator.vibrate(100);
       try {
         const ctx = new (window.AudioContext||window.webkitAudioContext)();
@@ -207,11 +365,26 @@
       } catch(e) {}
     }
 
-    // Map
-    if (r.lat!=null && r.lon!=null){
-      const latlng=[+r.lat,+r.lon];
-      track.addLatLng(latlng); marker.setLatLng(latlng);
-      if (track.getLatLngs().length===1) map.setView(latlng, 16);
+    // Map update (robust)
+    const latlng = goodCoord(r);
+    if (!latlng) {
+      const lat = r.lat ?? 'null', lon = r.lon ?? 'null', acc = r.accuracy_m ?? 'null';
+      log(`skip row: bad lat/lon/accuracy → lat=${lat} lon=${lon} acc=${acc}`, 'warn');
+    } else {
+      lastLatLng = latlng;
+      track.addLatLng(latlng);
+      marker.setLatLng(latlng);
+
+      if (!gotFirstFix) {
+        gotFirstFix = true;
+        map.setView(latlng, 16);
+        recenterBtn.disabled = false;
+        log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`, 'ok');
+      } else if (AUTO_FOLLOW) {
+        map.panTo(latlng, { animate: false });
+      }
+
+      lastPointEl.textContent = `${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}  (acc≤${ACCURACY_MAX}m)`;
     }
 
     // Charts
@@ -220,16 +393,39 @@
     pushChart(noiseChart, t, r.db_smooth ?? r.dbfs ?? null);
   }
 
-  function pushChart(chart,label,val){
-    if(val==null) return;
-    const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val);
-    if(d.labels.length>MAX_POINTS){ d.labels.shift(); d.datasets[0].data.shift(); }
-    chart.update('none');
-  }
-
-  // Wire up
+  // Buttons
   listenBtn.addEventListener('click', ()=> listen(sessionSel.value));
   stopBtn.addEventListener('click', stop);
+  recenterBtn.addEventListener('click', ()=>{ if (lastLatLng){ map.setView(lastLatLng, 16); map.invalidateSize(); } });
+
+  shareBtn.addEventListener('click', async ()=>{
+    const sid = sessionSel.value;
+    if (!sid){ log('No session selected','warn'); return; }
+    const url = `${location.origin}${location.pathname}?session=${encodeURIComponent(sid)}`;
+    try{
+      await navigator.clipboard.writeText(url);
+      log('Share link copied to clipboard','ok');
+    }catch(e){
+      log('Copy failed. Long-press to copy: '+url,'warn');
+      alert(url);
+    }
+  });
+
+  helpBtn.addEventListener('click', ()=>{
+    alert(
+`How to use:
+1) On another phone, run the Logger (start recording).
+2) Here, pick the newest session and tap "Listen live".
+3) Map draws the path, charts update, comfort shows green/yellow/red.
+4) Use "Recenter map" or enable Auto-follow.
+5) Adjust "Accuracy max" if many points are skipped.
+Tip: Use the "Share" button to send a live link to this session.`
+    );
+  });
+
+  // Network status
+  window.addEventListener('online',  ()=> log('Network: online','ok'));
+  window.addEventListener('offline', ()=> log('Network: offline','err'));
 
   // Boot
   loadSessions().catch(e=>{ log('Error loading sessions: '+e.message,'err') });
