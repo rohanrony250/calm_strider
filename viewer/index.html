@@ -61,7 +61,7 @@
 <header>
   <div>
     <h1>📊 Calm Strider — Viewer</h1>
-    <div class="sub">View sessions stored in Firebase: map, charts, comfort & weather</div>
+    <div class="sub">Compare walking routes by comfort: map, charts, and weather-aware scores</div>
   </div>
   <div class="flex">
     <button id="shareBtn">Share</button>
@@ -123,8 +123,30 @@
       </span>
     </div>
     <div class="hint" style="margin-top:6px;">
-      Extra task: you can tune how strongly roughness, noise, rain and wind penalise the comfort score.
+      Extra task: tune how strongly roughness, noise, rain and wind penalise the comfort score.
     </div>
+  </div>
+
+  <!-- NEW: Route comparison table -->
+  <div class="card">
+    <div class="k">Route comparison</div>
+    <div class="hint">
+      Each row is one recorded walk (session). Routes are sorted by average comfort, using analysis stored in Firebase.
+      Click a row to open it.
+    </div>
+    <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);">Route</th>
+          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Avg comfort</th>
+          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Good / OK / Low</th>
+          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Samples</th>
+        </tr>
+      </thead>
+      <tbody id="routeTableBody">
+        <tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="tabs">
@@ -191,6 +213,7 @@
   const accVal      = document.getElementById('accVal');
   const statusEl    = document.getElementById('status');
   const shareBtn    = document.getElementById('shareBtn');
+  const routeTableBody = document.getElementById('routeTableBody');
 
   const sCountEl    = document.getElementById('sCount');
   const comfortEl   = document.getElementById('comfort');
@@ -323,7 +346,7 @@
     const pWind  = pWindBase  * weights.wind;
 
     const score = clamp(Math.round(100-pRough-pNoise-pRain-pWind),0,100);
-    return {score,pRough,pNoise,pRain,pWind,pRoughBase,pNoiseBase,pRainBase,pWindBase};
+    return {score,pRough,pNoise,pRain,pWind};
   }
 
   // Analysis stats → stored back to Firebase
@@ -356,7 +379,6 @@
     };
     await set(ref(db, `public/sessions/${currentSessionId}/analysis`), doc);
 
-    // Update UI summary
     sessAnalysisEl.textContent = avgComfort!=null
       ? `avg ${avgComfort.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`
       : '—';
@@ -399,7 +421,6 @@
     if(wMps!=null) windEl.textContent=wMps.toFixed(1);
     if(rain!=null) rainEl.textContent=rain.toFixed(2);
 
-    // comfort analysis from fused data (sensor + weather)
     const std=rollStdPush(lastAmagVals,aTot,20);
     const parts=comfortParts(std,db,rain,wMps);
     comfortEl.textContent=parts.score;
@@ -407,11 +428,9 @@
     comfortBadge.className='badge ' + (parts.score>=70?'ok':parts.score>=50?'warn':'err');
     comfortBreak.textContent=`penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
 
-    // "actuation": marker colour follows comfort (green/amber/red)
     const col = parts.score>=70 ? '#1abc9c' : parts.score>=50 ? '#f1c40f' : '#e74c3c';
     marker.setStyle({fillColor:col, color:'#fff'});
 
-    // analysis stats → cloud
     updateStats(r, parts);
 
     const latlng=goodCoord(r);
@@ -441,25 +460,121 @@
   let detach=null;
   async function loadSessions(){
     sessionSel.innerHTML='';
+    routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
+
     const snap=await get(query(ref(db,'public/sessions'),orderByKey(),limitToLast(40)));
     const sessions=[];
     snap.forEach(ch=>{
-      const id=ch.key; const meta=ch.val()?.meta||{}; const started=meta.startedAt||0;
-      sessions.push({id,started,meta});
+      const id=ch.key;
+      const val=ch.val() || {};
+      const meta=val.meta || {};
+      const analysis=val.analysis || null;
+      const started=meta.startedAt || 0;
+      sessions.push({id,started,meta,analysis});
     });
     sessions.sort((a,b)=>b.started-a.started);
+
+    // dropdown options
     sessions.forEach((s,i)=>{
       const opt=document.createElement('option');
       const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
-      opt.value=s.id; opt.textContent=`${dt} — ${s.id.slice(0,8)}…`; if(i===0) opt.selected=true;
+      const label = s.meta.routeLabel || `Walk ${dt}`;
+      if (s.analysis && typeof s.analysis.avgComfort==='number'){
+        opt.textContent = `${label} — avg ${s.analysis.avgComfort.toFixed(1)} · ${dt}`;
+      } else {
+        opt.textContent = `${label} · ${dt}`;
+      }
+      opt.value=s.id;
+      if(i===0) opt.selected=true;
       sessionSel.appendChild(opt);
     });
+
     if(sessions.length){
       sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
       statusEl.textContent='Pick a session and tap Listen';
     }else{
       statusEl.textContent='No sessions found';
     }
+
+    // route comparison table
+    routeTableBody.innerHTML='';
+    if(!sessions.length){
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes found yet. Record a walk with the logger.</td>';
+      routeTableBody.appendChild(tr);
+      return;
+    }
+
+    const summaries = sessions.map(s=>{
+      const a=s.analysis;
+      const n=a?.n ?? null;
+      const avg=(a && typeof a.avgComfort==='number') ? a.avgComfort : null;
+      const nGood=a?.nGood ?? 0;
+      const nOk=a?.nOk ?? 0;
+      const nLow=a?.nLow ?? 0;
+      const label=s.meta.routeLabel || (s.started? `Walk ${new Date(s.started).toISOString().replace('T',' ').slice(0,16)}` : s.id);
+      return {id:s.id,label,started:s.started,avg,n,nGood,nOk,nLow};
+    });
+
+    summaries.sort((a,b)=>{
+      if(a.avg==null && b.avg==null) return b.started-a.started;
+      if(a.avg==null) return 1;
+      if(b.avg==null) return -1;
+      return b.avg-a.avg;
+    });
+
+    summaries.forEach(sum=>{
+      const tr=document.createElement('tr');
+      tr.style.cursor='pointer';
+      tr.addEventListener('click',()=>{
+        sessionSel.value=sum.id;
+        listenSession(sum.id);
+        window.scrollTo({top:0,behavior:'smooth'});
+      });
+
+      const tdRoute=document.createElement('td');
+      tdRoute.style.padding='4px 6px';
+      tdRoute.style.borderBottom='1px solid var(--line)';
+      tdRoute.textContent=sum.label;
+
+      const tdAvg=document.createElement('td');
+      tdAvg.style.padding='4px 6px';
+      tdAvg.style.textAlign='right';
+      tdAvg.style.borderBottom='1px solid var(--line)';
+      if(sum.avg==null){
+        tdAvg.textContent='—';
+        tdAvg.className='hint';
+      }else{
+        tdAvg.textContent=sum.avg.toFixed(1);
+        tdAvg.className = sum.avg>=70?'ok':sum.avg>=50?'warn':'err';
+      }
+
+      const tdDist=document.createElement('td');
+      tdDist.style.padding='4px 6px';
+      tdDist.style.textAlign='right';
+      tdDist.style.borderBottom='1px solid var(--line)';
+      if(sum.n && sum.avg!=null){
+        const pG=(sum.nGood*100/sum.n).toFixed(0);
+        const pO=(sum.nOk*100/sum.n).toFixed(0);
+        const pL=(sum.nLow*100/sum.n).toFixed(0);
+        tdDist.textContent=`${pG}% / ${pO}% / ${pL}%`;
+      }else{
+        tdDist.textContent='—';
+        tdDist.className='hint';
+      }
+
+      const tdN=document.createElement('td');
+      tdN.style.padding='4px 6px';
+      tdN.style.textAlign='right';
+      tdN.style.borderBottom='1px solid var(--line)';
+      tdN.textContent = sum.n!=null ? String(sum.n) : '—';
+
+      tr.appendChild(tdRoute);
+      tr.appendChild(tdAvg);
+      tr.appendChild(tdDist);
+      tr.appendChild(tdN);
+      routeTableBody.appendChild(tr);
+    });
 
     // deep link
     const sid=new URLSearchParams(location.search).get('session');
@@ -469,11 +584,12 @@
     }
   }
 
+  // listening
+  let detach=null;
   async function listenSession(sessionId){
     if(detach){ detach(); detach=null; }
     currentSessionId = sessionId;
 
-    // reset visuals
     track.remove(); marker.remove();
     track=L.polyline([], {color:'#5bc0ff',weight:4,opacity:.95}).addTo(map);
     marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
@@ -508,7 +624,6 @@
     const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
     if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
 
-    // try to load existing analysis (if any)
     const anaSnap=await get(child(ref(db),`public/sessions/${sessionId}/analysis`));
     if(anaSnap.exists()){
       const a=anaSnap.val();
@@ -528,10 +643,7 @@
     statusEl.textContent='';
   }
 
-  // wire up
-  listenBtn.addEventListener('click',()=> listenSession(sessionSel.value));
-  stopBtn.addEventListener('click',stopListening);
-  recenterBtn.addEventListener('click',()=>{ if(lastLatLng){ map.setView(lastLatLng,16); map.invalidateSize(); }});
+  // share
   shareBtn.addEventListener('click',async()=>{
     const sid=sessionSel.value;
     if(!sid){ log('No session selected','warn'); return; }
@@ -539,6 +651,10 @@
     try{ await navigator.clipboard.writeText(url); log('Share link copied: '+url,'ok'); }
     catch(e){ log('Copy failed; URL: '+url,'warn'); alert(url); }
   });
+
+  listenBtn.addEventListener('click',()=> listenSession(sessionSel.value));
+  stopBtn.addEventListener('click',stopListening);
+  recenterBtn.addEventListener('click',()=>{ if(lastLatLng){ map.setView(lastLatLng,16); map.invalidateSize(); }});
 
   accVal.textContent=accRange.value;
   loadSessions().catch(e=>log('Error loading sessions: '+e.message,'err'));
