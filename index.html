@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<title>Calm Strider — Live</title>
+<title>Calm Strider — Capture & View</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root{
@@ -18,7 +18,7 @@
   h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
   .sub{font-size:12px;color:var(--mut)}
   main{max-width:1200px;margin:0 auto;padding:14px}
-  .row{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+  .row{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
   .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   select,button,input[type="range"]{
@@ -28,7 +28,7 @@
   select{min-width:220px}
   button[disabled]{opacity:.6;cursor:not-allowed}
   .pill{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:#0f1730;font-size:12px}
-  .statgrid{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:10px}
+  .statgrid{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px}
   .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
   .k{font-size:11px;color:var(--mut)}
   .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
@@ -41,21 +41,18 @@
   .tab.active{outline:2px solid #2b3c67}
   .section{display:none}
   .section.active{display:block}
-  .log{max-height:180px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
+  .log{max-height:220px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
   .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .grow{flex:1}
   .right{margin-left:auto}
   .hint{font-size:12px;color:var(--mut)}
-  .switch{display:inline-flex;align-items:center;gap:6px}
-  .switch input{width:42px}
   @media (max-width:1020px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(3,1fr)} #map{height:360px} }
 </style>
 </head>
 <body>
 <header>
   <div>
-    <h1>📊 Calm Strider — Live</h1>
-    <div class="sub">Real-time map, charts & comfort score</div>
+    <h1>📱 Calm Strider — Capture & View</h1>
+    <div class="sub">Capture sensors + upload + live view</div>
   </div>
   <div class="flex">
     <button id="shareBtn" title="Copy share link">Share</button>
@@ -65,17 +62,50 @@
 
 <main>
 
-  <!-- Top Controls -->
+  <!-- CAPTURE controls -->
   <div class="card">
     <div class="controls">
+      <strong>Capture:</strong>
+      <button id="permBtn">Request Permissions</button>
+      <button id="startCapBtn">Start Capture</button>
+      <button id="stopCapBtn" disabled>Stop</button>
+      <button id="startMicBtn">Start Mic</button>
+      <button id="stopMicBtn" disabled>Stop Mic</button>
+      <span class="pill">Mode
+        <select id="modeSel">
+          <option value="throttle" selected>Event-throttle</option>
+          <option value="timer">Fixed-interval</option>
+        </select>
+      </span>
+      <span class="pill">Rate
+        <select id="rateSel">
+          <option value="0.5">0.5 Hz</option>
+          <option value="1">1 Hz</option>
+          <option value="2">2 Hz</option>
+          <option value="5">5 Hz</option>
+          <option value="10">10 Hz</option>
+          <option value="20" selected>20 Hz</option>
+          <option value="50">50 Hz</option>
+          <option value="60">60 Hz</option>
+          <option value="raw">raw</option>
+        </select>
+      </span>
+      <span id="capStatus" class="hint right"></span>
+    </div>
+  </div>
+
+  <!-- VIEW controls -->
+  <div class="card">
+    <div class="controls">
+      <strong>View:</strong>
       <label>Session:
         <select id="sessionSel"></select>
       </label>
       <button id="listenBtn">Listen live</button>
       <button id="stopBtn" disabled>Stop</button>
       <button id="recenterBtn" disabled>Recenter map</button>
-      <span class="pill"><input id="followChk" type="checkbox" checked/> Auto-follow</span>
-      <span class="pill">Accuracy max: <span id="accVal">80</span> m <input id="accRange" type="range" min="10" max="200" value="80" step="5" /></span>
+      <span class="pill">Auto-follow <input id="followChk" type="checkbox" checked/></span>
+      <span class="pill">Accuracy max: <span id="accVal">150</span> m <input id="accRange" type="range" min="10" max="300" value="150" step="5" /></span>
       <span id="status" class="hint right"></span>
     </div>
   </div>
@@ -90,6 +120,7 @@
       </div>
       <div class="stat"><div class="k">Speed m/s</div><div class="v" id="spd">—</div></div>
       <div class="stat"><div class="k">Accel |a|</div><div class="v" id="amag">—</div></div>
+      <div class="stat"><div class="k">Noise dBFS</div><div class="v" id="noise">—</div><div class="hint" id="noiseHint"></div></div>
       <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
       <div class="stat"><div class="k">Wind m/s · Rain mm/h</div><div class="v"><span id="wind">—</span> · <span id="rain">—</span></div></div>
     </div>
@@ -105,30 +136,26 @@
   <div class="row section active" id="sec-map">
     <div class="card"><div id="map"></div></div>
     <div class="card">
-      <div class="hint">Tip: Toggle “Auto-follow” to keep the map centered while moving.</div>
-      <div style="height:6px"></div>
       <div class="k">Last point</div>
       <div class="v" id="lastPoint">—</div>
       <div style="height:10px"></div>
-      <div class="k">Session</div>
+      <div class="k">Session meta</div>
       <div class="v" id="sessMeta">—</div>
+      <div style="height:10px"></div>
+      <div class="k">Skipped (accuracy)</div>
+      <div class="v" id="skipAcc">0</div>
+      <div class="k">Skipped (invalid coords)</div>
+      <div class="v" id="skipBad">0</div>
     </div>
   </div>
 
   <div class="row section" id="sec-charts">
-    <div class="card">
-      <canvas id="chartAccel" height="200"></canvas>
-    </div>
-    <div class="card">
-      <canvas id="chartNoise" height="200"></canvas>
-    </div>
+    <div class="card"><canvas id="chartAccel" height="200"></canvas></div>
+    <div class="card"><canvas id="chartNoise" height="200"></canvas></div>
   </div>
 
   <div class="section" id="sec-log">
-    <div class="card">
-      <div class="k">Event log</div>
-      <pre id="log" class="log"></pre>
-    </div>
+    <div class="card"><div class="k">Event log</div><pre id="log" class="log"></pre></div>
   </div>
 
 </main>
@@ -137,12 +164,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-<!-- Firebase (module) -->
+<!-- Firebase + App code -->
 <script type="module">
+  /* ---------------- Firebase init ---------------- */
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
-  import { getDatabase, ref, child, get, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+  import { getDatabase, ref, child, get, set, update, push, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
-  // --- Firebase config (same as logger) ---
   const firebaseConfig = {
     apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
     authDomain: "urban-app-be1f9.firebaseapp.com",
@@ -153,33 +180,46 @@
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
 
-  // --- UI refs ---
-  const sessionSel = document.getElementById('sessionSel');
-  const listenBtn  = document.getElementById('listenBtn');
-  const stopBtn    = document.getElementById('stopBtn');
-  const recenterBtn= document.getElementById('recenterBtn');
-  const followChk  = document.getElementById('followChk');
-  const accRange   = document.getElementById('accRange');
-  const accVal     = document.getElementById('accVal');
-  const statusEl   = document.getElementById('status');
+  /* ---------------- UI refs ---------------- */
+  const permBtn     = document.getElementById('permBtn');
+  const startCapBtn = document.getElementById('startCapBtn');
+  const stopCapBtn  = document.getElementById('stopCapBtn');
+  const startMicBtn = document.getElementById('startMicBtn');
+  const stopMicBtn  = document.getElementById('stopMicBtn');
+  const modeSel     = document.getElementById('modeSel');
+  const rateSel     = document.getElementById('rateSel');
+  const capStatus   = document.getElementById('capStatus');
 
-  const sCountEl   = document.getElementById('sCount');
-  const comfortEl  = document.getElementById('comfort');
-  const comfortBadge = document.getElementById('comfortBadge');
-  const comfortBreak = document.getElementById('comfortBreak');
-  const spdEl      = document.getElementById('spd');
-  const amagEl     = document.getElementById('amag');
-  const tempEl     = document.getElementById('temp');
-  const windEl     = document.getElementById('wind');
-  const rainEl     = document.getElementById('rain');
-  const lastPointEl= document.getElementById('lastPoint');
-  const sessMetaEl = document.getElementById('sessMeta');
+  const sessionSel  = document.getElementById('sessionSel');
+  const listenBtn   = document.getElementById('listenBtn');
+  const stopBtn     = document.getElementById('stopBtn');
+  const recenterBtn = document.getElementById('recenterBtn');
+  const followChk   = document.getElementById('followChk');
+  const accRange    = document.getElementById('accRange');
+  const accVal      = document.getElementById('accVal');
+  const statusEl    = document.getElementById('status');
 
-  const logEl      = document.getElementById('log');
-  const shareBtn   = document.getElementById('shareBtn');
-  const helpBtn    = document.getElementById('helpBtn');
+  const sCountEl    = document.getElementById('sCount');
+  const comfortEl   = document.getElementById('comfort');
+  const comfortBadge= document.getElementById('comfortBadge');
+  const comfortBreak= document.getElementById('comfortBreak');
+  const spdEl       = document.getElementById('spd');
+  const amagEl      = document.getElementById('amag');
+  const noiseEl     = document.getElementById('noise');
+  const noiseHint   = document.getElementById('noiseHint');
+  const tempEl      = document.getElementById('temp');
+  const windEl      = document.getElementById('wind');
+  const rainEl      = document.getElementById('rain');
+  const lastPointEl = document.getElementById('lastPoint');
+  const sessMetaEl  = document.getElementById('sessMeta');
+  const skipAccEl   = document.getElementById('skipAcc');
+  const skipBadEl   = document.getElementById('skipBad');
 
-  // Tabs
+  const logEl       = document.getElementById('log');
+  const shareBtn    = document.getElementById('shareBtn');
+  const helpBtn     = document.getElementById('helpBtn');
+
+  /* ---------------- Tabs ---------------- */
   const tabs = document.querySelectorAll('.tab');
   const secMap = document.getElementById('sec-map');
   const secCharts = document.getElementById('sec-charts');
@@ -193,57 +233,42 @@
     if (id==='map') setTimeout(()=>map.invalidateSize(), 50);
   }));
 
-  // --- Logging helper ---
-  const log = (msg, cls='')=>{
-    const line=document.createElement('div');
-    line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
-    if (cls) line.className=cls;
-    logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
-  };
+  /* ---------------- Utils ---------------- */
+  function log(msg, cls=''){ const line=document.createElement('div'); line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`; if (cls) line.className=cls; logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight; }
+  function num(v){ if (v===null || v===undefined || v==='') return null; const n = typeof v==='string' ? parseFloat(v) : +v; return Number.isFinite(n) ? n : null; }
+  function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
 
-  // --- Map ---
+  /* ---------------- Map ---------------- */
   const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' }).addTo(map);
   let track = L.polyline([], {color: '#5bc0ff', weight: 4, opacity:.95}).addTo(map);
   let marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
-  let gotFirstFix = false;
-  let lastLatLng = null;
-  let AUTO_FOLLOW = true;
+  let gotFirstFix=false, lastLatLng=null, AUTO_FOLLOW=true;
   let ACCURACY_MAX = parseInt(accRange.value,10);
+  let skippedAcc = 0, skippedBad=0;
 
   accRange.addEventListener('input', ()=>{ ACCURACY_MAX=parseInt(accRange.value,10); accVal.textContent=ACCURACY_MAX; });
   followChk.addEventListener('change', ()=>{ AUTO_FOLLOW = followChk.checked; });
 
-  // --- Charts ---
-  const accelChart = new Chart(document.getElementById('chartAccel'),{
-    type:'line',
-    data:{ labels:[], datasets:[{ label:'|a| m/s²', data:[], tension:.2, borderWidth:2, pointRadius:0 }]},
-    options:{ animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}} }
-  });
-  const noiseChart = new Chart(document.getElementById('chartNoise'),{
-    type:'line',
-    data:{ labels:[], datasets:[{ label:'dBFS', data:[], tension:.2, borderWidth:2, pointRadius:0 }]},
-    options:{ animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}} }
-  });
-
-  // --- State ---
-  let detach = null;            // unsubscribe fn
-  let count = 0;
-  let lastAmagVals = [];        // for rolling std
-  const MAX_POINTS = 800;
-
-  function num(v){ const n = typeof v==='string' ? parseFloat(v) : +v; return Number.isFinite(n) ? n : null; }
   function goodCoord(r){
     const lat = num(r.lat), lon = num(r.lon);
-    if (lat==null || lon==null) return null;
-    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
-    const acc = num(r.accuracy_m);
-    if (acc!=null && acc > ACCURACY_MAX) return null;
-    return [lat, lon];
+    if (lat==null || lon==null || Math.abs(lat)>90 || Math.abs(lon)>180){ skippedBad++; skipBadEl.textContent=String(skippedBad); return null; }
+    const acc = num(r.accuracy_m); if (acc!=null && acc>ACCURACY_MAX){ skippedAcc++; skipAccEl.textContent=String(skippedAcc); return null; }
+    return [lat,lon];
   }
 
-  // Comfort score & breakdown
-  function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
+  /* ---------------- Charts ---------------- */
+  const accelChart = new Chart(document.getElementById('chartAccel'),{
+    type:'line', data:{labels:[], datasets:[{label:'|a| m/s²', data:[], tension:.2, borderWidth:2, pointRadius:0}]},
+    options:{animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}}}
+  });
+  const noiseChart = new Chart(document.getElementById('chartNoise'),{
+    type:'line', data:{labels:[], datasets:[{label:'dBFS', data:[], tension:.2, borderWidth:2, pointRadius:0}]},
+    options:{animation:false, plugins:{legend:{display:false}}, scales:{x:{display:false}}}
+  });
+  function pushChart(chart,label,val){ if(val==null) return; const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val); if(d.labels.length>800){ d.labels.shift(); d.datasets[0].data.shift(); } chart.update('none'); }
+
+  /* ---------------- Comfort ---------------- */
   function comfortScoreParts(aStd, dbfs, precip, wind){
     const pRough = clamp((aStd||0)*12, 0, 40);
     const baseDb = (dbfs!=null ? dbfs : -50); // dbfs negative
@@ -253,182 +278,250 @@
     const score  = clamp(Math.round(100 - pRough - pNoise - pRain - pWind), 0, 100);
     return { score, pRough, pNoise, pRain, pWind };
   }
-  function rollStdPush(arr, val, win=20){
-    if(val==null) return 0;
-    arr.push(val); if(arr.length>win) arr.shift();
-    const n=arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n;
-    const v = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n;
-    return Math.sqrt(v);
-  }
+  function rollStdPush(arr, val, win=20){ if(val==null) return 0; arr.push(val); if(arr.length>win) arr.shift(); const n=arr.length, mean=arr.reduce((a,b)=>a+b,0)/n; const v=arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/n; return Math.sqrt(v); }
 
-  // Sessions
-  async function loadSessions(){
-    sessionSel.innerHTML = '';
-    const snap = await get(query(ref(db,'public/sessions'), orderByKey(), limitToLast(40)));
-    const sessions = [];
-    snap.forEach(ch => {
-      const id = ch.key;
-      const meta = ch.val()?.meta || {};
-      const started = meta.startedAt || 0;
-      sessions.push({ id, started, meta });
-    });
-    sessions.sort((a,b)=>b.started-a.started);
-    sessions.forEach((s,i)=>{
-      const opt = document.createElement('option');
-      const dt = s.started ? new Date(s.started).toISOString().replace('T',' ').slice(0,19) : 'unknown';
-      opt.value = s.id; opt.textContent = `${dt} — ${s.id.slice(0,8)}…`;
-      if(i===0) opt.selected = true;
-      sessionSel.appendChild(opt);
-    });
-    if (sessions.length){
-      sessMetaEl.textContent = JSON.stringify(sessions[0].meta || {}, null, 0);
-      statusEl.textContent = 'Pick a session and tap Listen';
-    } else {
-      statusEl.textContent = 'No sessions found';
-    }
+  /* ---------------- Data stream fan-in ---------------- */
+  // Any producer (local capture OR Firebase listener) can call feedRow(r) to update UI.
+  let lastAmagVals=[];
+  function feedRow(r){
+    // Tiles
+    const aTot = num(r.a_total), db=num(r.db_smooth!=null ? r.db_smooth : r.dbfs), spd=num(r.speed_mps);
+    const tC=num(r.w_temp_c), wMps=num(r.w_wind_mps), rain=num(r.w_precip_mm);
+    if (spd!=null) spdEl.textContent = spd.toFixed(2);
+    if (aTot!=null) amagEl.textContent = aTot.toFixed(2);
+    if (db!=null){ noiseEl.textContent = db.toFixed(1); noiseHint.textContent=''; } else { noiseEl.textContent='—'; noiseHint.textContent='No mic data (start mic if capturing)'; }
+    if (tC!=null) tempEl.textContent=tC.toFixed(1);
+    if (wMps!=null) windEl.textContent=wMps.toFixed(1);
+    if (rain!=null) rainEl.textContent=rain.toFixed(2);
 
-    // support ?session=ID deep link
-    const params = new URLSearchParams(location.search);
-    const sid = params.get('session');
-    if (sid){
-      const opt = [...sessionSel.options].find(o=>o.value===sid);
-      if (opt){ sessionSel.value = sid; listen(sid); }
-    }
-  }
-
-  function listen(sessionId){
-    if (detach){ detach(); detach=null; }
-    // reset visuals
-    track.remove(); marker.remove();
-    track = L.polyline([], {color:'#5bc0ff', weight:4, opacity:.95}).addTo(map);
-    marker = L.circleMarker([0,0], {radius:6, color:'#fff', weight:2, fillColor:'#1abc9c', fillOpacity:0.9}).addTo(map);
-    gotFirstFix = false; lastLatLng = null; count = 0; lastAmagVals.length = 0;
-    sCountEl.textContent = '0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
-
-    const q = query(ref(db, `public/sessions/${sessionId}/readings`), orderByKey(), limitToLast(MAX_POINTS));
-    const handler = snap => onRow(snap.val());
-    const unsub = onChildAdded(q, handler);
-    detach = ()=> off(q, 'child_added', handler);
-
-    statusEl.textContent = `Listening: ${sessionId}`;
-    stopBtn.disabled = false; listenBtn.disabled = true; sessionSel.disabled = true; recenterBtn.disabled = true;
-    setTimeout(()=> map.invalidateSize(), 120);
-
-    // show meta
-    get(child(ref(db), `public/sessions/${sessionId}/meta`)).then(s=>{
-      if (s.exists()){ sessMetaEl.textContent = JSON.stringify(s.val(), null, 0); }
-    });
-    log(`Listening to /public/sessions/${sessionId}/readings`, 'ok');
-  }
-
-  function stop(){
-    if (detach){ detach(); detach=null; log('Stopped listening','warn'); }
-    stopBtn.disabled = true; listenBtn.disabled = false; sessionSel.disabled = false; statusEl.textContent = '';
-    recenterBtn.disabled = true;
-  }
-
-  // Charts helper
-  function pushChart(chart,label,val){
-    if(val==null) return;
-    const d=chart.data; d.labels.push(label); d.datasets[0].data.push(val);
-    if(d.labels.length>MAX_POINTS){ d.labels.shift(); d.datasets[0].data.shift(); }
-    chart.update('none');
-  }
-
-  // On each row
-  function onRow(r){
-    count++; sCountEl.textContent = String(count);
-
-    // Stats tiles
-    if (r.speed_mps!=null) spdEl.textContent = (+r.speed_mps).toFixed(2);
-    if (r.a_total!=null)   amagEl.textContent = (+r.a_total).toFixed(2);
-    if (r.w_temp_c!=null)  tempEl.textContent = (+r.w_temp_c).toFixed(1);
-    if (r.w_wind_mps!=null)windEl.textContent = (+r.w_wind_mps).toFixed(1);
-    if (r.w_precip_mm!=null)rainEl.textContent= (+r.w_precip_mm).toFixed(2);
-
-    // Comfort
-    const std = rollStdPush(lastAmagVals, r.a_total ?? null, 20);
-    const parts = comfortScoreParts(std, r.db_smooth ?? r.dbfs ?? -50, r.w_precip_mm, r.w_wind_mps);
+    // Comfort + actuation
+    const std = rollStdPush(lastAmagVals, aTot, 20);
+    const parts = comfortScoreParts(std, db, rain, wMps);
     comfortEl.textContent = parts.score;
     comfortBadge.textContent = parts.score>=70 ? 'Good' : parts.score>=50 ? 'OK' : 'Low';
     comfortBadge.className = 'badge ' + (parts.score>=70 ? 'ok' : parts.score>=50 ? 'warn' : 'err');
     comfortBreak.textContent = `penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
+    if (parts.score<50){ if(navigator.vibrate) navigator.vibrate(100); try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(), g=ctx.createGain(); o.type='sine'; o.frequency.value=660; o.connect(g); g.connect(ctx.destination); g.gain.value=0.03; o.start(); setTimeout(()=>{o.stop();ctx.close();},120);}catch(e){} }
 
-    // Actuation emulation (buzz/beep when uncomfortable)
-    if (parts.score < 50) {
-      if (navigator.vibrate) navigator.vibrate(100);
-      try {
-        const ctx = new (window.AudioContext||window.webkitAudioContext)();
-        const o = ctx.createOscillator(); const g = ctx.createGain();
-        o.type='sine'; o.frequency.value=660; o.connect(g); g.connect(ctx.destination);
-        g.gain.value=0.03; o.start(); setTimeout(()=>{o.stop();ctx.close();},120);
-      } catch(e) {}
-    }
-
-    // Map update (robust)
+    // Map
     const latlng = goodCoord(r);
-    if (!latlng) {
-      const lat = r.lat ?? 'null', lon = r.lon ?? 'null', acc = r.accuracy_m ?? 'null';
-      log(`skip row: bad lat/lon/accuracy → lat=${lat} lon=${lon} acc=${acc}`, 'warn');
+    if(latlng){
+      lastLatLng=latlng; track.addLatLng(latlng); marker.setLatLng(latlng);
+      if(!gotFirstFix){ gotFirstFix=true; map.setView(latlng,16); recenterBtn.disabled=false; log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`,'ok'); }
+      else if (AUTO_FOLLOW){ map.panTo(latlng, {animate:false}); }
+      lastPointEl.textContent = `${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)} (acc≤${ACCURACY_MAX}m)`;
     } else {
-      lastLatLng = latlng;
-      track.addLatLng(latlng);
-      marker.setLatLng(latlng);
-
-      if (!gotFirstFix) {
-        gotFirstFix = true;
-        map.setView(latlng, 16);
-        recenterBtn.disabled = false;
-        log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`, 'ok');
-      } else if (AUTO_FOLLOW) {
-        map.panTo(latlng, { animate: false });
-      }
-
-      lastPointEl.textContent = `${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}  (acc≤${ACCURACY_MAX}m)`;
+      const lat = r.lat ?? 'null', lon=r.lon ?? 'null', acc=r.accuracy_m ?? 'null';
+      log(`skip row: lat=${lat} lon=${lon} acc=${acc}`, 'warn');
     }
 
     // Charts
-    const t = r.timestamp_ms ? new Date(r.timestamp_ms).toLocaleTimeString() : '';
-    pushChart(accelChart, t, r.a_total ?? null);
-    pushChart(noiseChart, t, r.db_smooth ?? r.dbfs ?? null);
+    const lbl = r.timestamp_ms ? new Date(+r.timestamp_ms).toLocaleTimeString() : '';
+    pushChart(accelChart, lbl, aTot);
+    pushChart(noiseChart, lbl, db);
+
+    // counter
+    sCountEl.textContent = String((+sCountEl.textContent||0)+1);
   }
 
-  // Buttons
-  listenBtn.addEventListener('click', ()=> listen(sessionSel.value));
-  stopBtn.addEventListener('click', stop);
-  recenterBtn.addEventListener('click', ()=>{ if (lastLatLng){ map.setView(lastLatLng, 16); map.invalidateSize(); } });
-
-  shareBtn.addEventListener('click', async ()=>{
-    const sid = sessionSel.value;
-    if (!sid){ log('No session selected','warn'); return; }
-    const url = `${location.origin}${location.pathname}?session=${encodeURIComponent(sid)}`;
+  /* ---------------- WEATHER (Open-Meteo) ---------------- */
+  let latestWeather = null; let weatherTimer=null;
+  async function fetchWeather(lat, lon){
     try{
-      await navigator.clipboard.writeText(url);
-      log('Share link copied to clipboard','ok');
-    }catch(e){
-      log('Copy failed. Long-press to copy: '+url,'warn');
-      alert(url);
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,wind_speed_10m,precipitation`;
+      const j = await fetch(url).then(r=>r.json());
+      const c = j.current || j.current_weather || {};
+      latestWeather = {
+        w_temp_c: (c.temperature_2m!=null ? c.temperature_2m : c.temperature),
+        w_wind_mps: (c.wind_speed_10m!=null ? c.wind_speed_10m : c.windspeed),
+        w_precip_mm: c.precipitation ?? 0,
+        w_ts: Date.now(),
+        w_source: 'open-meteo'
+      };
+      log(`[cloud] weather updated: ${latestWeather.w_temp_c}°C, wind ${latestWeather.w_wind_mps} m/s, rain ${latestWeather.w_precip_mm} mm/h`,'ok');
+    }catch(e){ log(`[cloud] weather error: ${e.message}`,'err'); }
+  }
+
+  /* ---------------- CAPTURE (sensors + upload) ---------------- */
+  let recording=false, sessionId=null, buffer=[], flushTimer=null, minIntervalMs=50, intervalMs=50, writeMode='throttle', lastWriteTs=0, timerId=null;
+  let lastAx=null,lastAy=null,lastAz=null,lastAmag=null, latestGeo=null, watchId=null, motionHandler=null;
+  let audioCtx=null, analyser=null, micStream=null, micRaf=null, micActive=false, lastDbfs=null, lastDbSmooth=null;
+  let sampleId=0;
+
+  function hasMotionSupport(){ return 'DeviceMotionEvent' in window; }
+  function hasGeoSupport(){ return 'geolocation' in navigator; }
+
+  async function requestPermissions(){
+    try{
+      if (!hasMotionSupport()){ log('DeviceMotion not supported','err'); }
+      else if (typeof DeviceMotionEvent.requestPermission==='function'){ const resp = await DeviceMotionEvent.requestPermission(); log(`Motion permission: ${resp}`, resp==='granted'?'ok':'err'); }
+      else { log('Motion permission: not required','ok'); }
+      if (hasGeoSupport()){
+        await new Promise(resolve=>{
+          navigator.geolocation.getCurrentPosition(
+            (pos)=>{ latestGeo=pos; log('Location permission granted','ok'); resolve(); },
+            (err)=>{ log('Location permission error: '+err.message,'err'); resolve(); },
+            { enableHighAccuracy:true, timeout:7000, maximumAge:0 }
+          );
+        });
+      } else { log('Geolocation not supported','err'); }
+    }catch(e){ log('Permission request error: '+e.message,'err'); }
+  }
+
+  function startMic(){
+    if (micActive) return;
+    if (!navigator.mediaDevices?.getUserMedia){ log('Mic not supported','err'); return; }
+    navigator.mediaDevices.getUserMedia({audio:true, video:false}).then(stream=>{
+      micStream=stream;
+      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+      return audioCtx.resume().then(()=>{
+        analyser = audioCtx.createAnalyser(); analyser.fftSize=2048;
+        audioCtx.createMediaStreamSource(stream).connect(analyser);
+        micActive=true; startMicBtn.disabled=true; stopMicBtn.disabled=false;
+        const buf=new Float32Array(analyser.fftSize); const alpha=0.2;
+        const tick=()=>{
+          if (!micActive) return;
+          analyser.getFloatTimeDomainData(buf);
+          let sum=0; for(let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; }
+          const rms = Math.sqrt(sum/buf.length)+1e-12;
+          lastDbfs = 20*Math.log10(rms);
+          lastDbSmooth = (lastDbSmooth==null)? lastDbfs : (alpha*lastDbfs + (1-alpha)*lastDbSmooth);
+          noiseEl.textContent = lastDbSmooth.toFixed(1);
+          noiseHint.textContent = '';
+          micRaf = requestAnimationFrame(tick);
+        };
+        tick();
+        log('Mic started (dBFS only; no audio saved)','ok');
+      });
+    }).catch(e=>log('Mic error: '+e.message,'err'));
+  }
+  function stopMic(){
+    if (!micActive) return;
+    micActive=false; if(micRaf) cancelAnimationFrame(micRaf), micRaf=null;
+    micStream?.getTracks().forEach(t=>t.stop()); micStream=null;
+    audioCtx?.close(); audioCtx=null; analyser=null; lastDbfs=null;
+    startMicBtn.disabled=false; stopMicBtn.disabled=true; noiseHint.textContent='Mic stopped';
+    log('Mic stopped','ok');
+  }
+
+  function applyRate(v){
+    if (v==='raw'){ minIntervalMs=0; intervalMs=0; log('Rate: raw (no throttle)','ok'); return; }
+    const hz = parseFloat(v); const ms = Math.max(1, Math.round(1000/hz));
+    if (writeMode==='throttle'){ minIntervalMs=ms; log(`Throttle: ~${hz} Hz (${ms} ms)`,'ok'); }
+    else { intervalMs=ms; if(timerId){ clearInterval(timerId); timerId=setInterval(()=>{ if(recording) pushRow(Date.now()); }, intervalMs);} log(`Fixed-interval: ${hz} Hz (${ms} ms)`,'ok'); }
+  }
+
+  function startCapture(){
+    if (recording) return;
+    // new session
+    sessionId = (crypto?.randomUUID?.() || String(Date.now()));
+    set(ref(db, `public/sessions/${sessionId}/meta`), { startedAt: Date.now(), sdk: 'web-all-in-one' });
+    capStatus.textContent = `session: ${sessionId}`;
+    log(`[cloud] session: public/sessions/${sessionId}`, 'ok');
+
+    // timers
+    buffer.length=0; sampleId=0; lastWriteTs=0; recording=true;
+    startCapBtn.disabled=true; stopCapBtn.disabled=false;
+
+    // start weather fetcher once we have a fix; also run every 60s
+    if (latestGeo?.coords){ fetchWeather(latestGeo.coords.latitude, latestGeo.coords.longitude); }
+    if (weatherTimer) clearInterval(weatherTimer);
+    weatherTimer = setInterval(()=>{
+      if (latestGeo?.coords){ fetchWeather(latestGeo.coords.latitude, latestGeo.coords.longitude); }
+    }, 60_000);
+
+    // GPS
+    if (hasGeoSupport()){
+      watchId = navigator.geolocation.watchPosition((pos)=>{
+        latestGeo=pos;
+      }, (err)=>log('GPS error: '+err.message,'warn'), { enableHighAccuracy:true, maximumAge:1000, timeout:10000 });
     }
-  });
 
-  helpBtn.addEventListener('click', ()=>{
-    alert(
-`How to use:
-1) On another phone, run the Logger (start recording).
-2) Here, pick the newest session and tap "Listen live".
-3) Map draws the path, charts update, comfort shows green/yellow/red.
-4) Use "Recenter map" or enable Auto-follow.
-5) Adjust "Accuracy max" if many points are skipped.
-Tip: Use the "Share" button to send a live link to this session.`
-    );
-  });
+    // Motion
+    motionHandler = (ev)=>{
+      const aIncG = ev.accelerationIncludingGravity || ev.acceleration || {};
+      lastAx = aIncG.x ?? null; lastAy = aIncG.y ?? null; lastAz = aIncG.z ?? null;
+      lastAmag = (lastAx!=null && lastAy!=null && lastAz!=null) ? Math.sqrt(lastAx*lastAx + lastAy*lastAy + lastAz*lastAz) : null;
+      if (writeMode==='throttle'){
+        const now = Date.now(); if (minIntervalMs && (now-lastWriteTs) < minIntervalMs) return;
+        lastWriteTs = now; pushRow(now);
+      }
+    };
+    window.addEventListener('devicemotion', motionHandler, {passive:true});
 
-  // Network status
-  window.addEventListener('online',  ()=> log('Network: online','ok'));
-  window.addEventListener('offline', ()=> log('Network: offline','err'));
+    // Timer mode
+    if (writeMode==='timer'){
+      if (timerId) clearInterval(timerId);
+      timerId = setInterval(()=>{ pushRow(Date.now()); }, intervalMs);
+    }
 
-  // Boot
-  loadSessions().catch(e=>{ log('Error loading sessions: '+e.message,'err') });
-</script>
-</body>
-</html>
+    // Flush loop
+    if (flushTimer) clearInterval(flushTimer);
+    flushTimer = setInterval(flushBuffer, 1000);
+
+    log('Capture started','ok');
+  }
+
+  function stopCapture(){
+    if (!recording) return;
+    recording=false; startCapBtn.disabled=false; stopCapBtn.disabled=true;
+    if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+    if (motionHandler){ window.removeEventListener('devicemotion', motionHandler); motionHandler=null; }
+    if (timerId){ clearInterval(timerId); timerId=null; }
+    if (flushTimer){ clearInterval(flushTimer); flushTimer=null; }
+    if (weatherTimer){ clearInterval(weatherTimer); weatherTimer=null; }
+    flushBuffer().then(()=> log('Capture stopped (final flush done)','ok'));
+  }
+
+  function makeRow(now){
+    const g = latestGeo ? latestGeo.coords : {};
+    const row = {
+      timestamp_iso: new Date(now).toISOString(),
+      timestamp_ms: now,
+      lat: g?.latitude ?? null,
+      lon: g?.longitude ?? null,
+      accuracy_m: g?.accuracy ?? null,
+      altitude_m: g?.altitude ?? null,
+      speed_mps: g?.speed ?? null,
+      heading_deg: g?.heading ?? null,
+      ax: lastAx, ay: lastAy, az: lastAz,
+      a_total: lastAmag,
+      dbfs: lastDbfs,
+      db_smooth: lastDbSmooth,
+      mic_active: micActive ? 1 : 0,
+      tag: null,
+      sample_id: sampleId++,
+      // merge latest weather snapshot
+      ...(latestWeather||{})
+    };
+    return row;
+  }
+
+  function pushRow(now){
+    const row = makeRow(now);
+    buffer.push(row);
+    feedRow(row); // instant UI
+  }
+
+  async function flushBuffer(){
+    if (!sessionId || buffer.length===0) return;
+    const updates = {};
+    for (const row of buffer){
+      const key = push(ref(db, `public/sessions/${sessionId}/readings`)).key;
+      updates[`public/sessions/${sessionId}/readings/${key}`] = row;
+    }
+    const n = buffer.length; buffer = [];
+    try{
+      await update(ref(db), updates);
+      log(`[cloud] uploaded ${n} row(s) → public/sessions/${sessionId}`,'ok');
+    }catch(e){
+      log(`[cloud] upload error: ${e.message}`,'err');
+    }
+  }
+
+  /* ---------------- VIEW (listen from Firebase) ---------------- */
+  let detach=null, activeReadingsPath=null;
+
+  async function resolveReadingsPath(sessionId){
+    const base=`public/sessions/${sessionId}`;
+    const sn
