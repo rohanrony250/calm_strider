@@ -80,6 +80,27 @@
   .weights label{font-size:11px;white-space:nowrap}
   .weights span.val{font-size:11px}
   input[type="range"]{width:90px;background:transparent}
+
+  /* Table for route comparison */
+  table{
+    border-collapse:collapse;
+    width:100%;
+    font-size:12px;
+    margin-top:6px;
+  }
+  th,td{
+    padding:4px 6px;
+    border-bottom:1px solid var(--line);
+  }
+  th{
+    text-align:left;
+    color:var(--mut);
+    font-weight:600;
+  }
+  td.num{text-align:right}
+  tr.clickable{cursor:pointer}
+  tr.clickable:hover{background:#151f3a}
+
   @media(max-width:1020px){
     .row{grid-template-columns:1fr}
     .statgrid{grid-template-columns:repeat(3,1fr)}
@@ -140,6 +161,7 @@
       </div>
     </div>
 
+    <!-- weight sliders (unchanged) -->
     <div class="weights">
       <span class="pill">
         <label for="wRough">Roughness</label>
@@ -165,6 +187,28 @@
     <div class="hint" style="margin-top:6px;">
       Comfort = 100 – weighted penalties for roughness, noise, rain, and wind.
     </div>
+  </div>
+
+  <!-- NEW: Route comparison table (all sessions) -->
+  <div class="card">
+    <div class="k">Route comparison (all sessions under <code>/public/sessions</code>)</div>
+    <div class="hint">
+      Each row is one recorded walk. Label comes from <code>meta.routeLabel</code> (set in the logger).
+      Click a row to jump to that session.
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Route label</th>
+          <th class="num">Avg comfort</th>
+          <th class="num">Samples</th>
+          <th>When</th>
+        </tr>
+      </thead>
+      <tbody id="routeTableBody">
+        <tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="tabs">
@@ -220,7 +264,7 @@
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
 
-  const SESSIONS_ROOT = 'public/sessions';   // <— this is the only place we assume the path
+  const SESSIONS_ROOT = 'public/sessions';
 
   // --- UI refs ---
   const sessionSel  = document.getElementById('sessionSel');
@@ -250,6 +294,8 @@
   const skipAccEl   = document.getElementById('skipAcc');
   const skipBadEl   = document.getElementById('skipBad');
   const logEl       = document.getElementById('log');
+
+  const routeTableBody = document.getElementById('routeTableBody');
 
   const tabs = document.querySelectorAll('.tab');
   const secMap   = document.getElementById('sec-map');
@@ -488,6 +534,7 @@
 
   async function loadSessions(){
     sessionSel.innerHTML='';
+    routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
     statusEl.textContent=`Loading sessions from /${SESSIONS_ROOT}…`;
     log(`Loading sessions from /${SESSIONS_ROOT}`);
 
@@ -498,15 +545,13 @@
       if (!snap.exists()){
         statusEl.textContent=`No sessions found under /${SESSIONS_ROOT}`;
         log(`No sessions found under /${SESSIONS_ROOT}. Is the logger writing there?`,'warn');
+        routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet. Record a walk with the logger.</td></tr>';
         return;
       }
 
       const rawVal = snap.val();
       console.log('[viewer] raw sessions value:', rawVal);
       log(`Got snapshot at /${SESSIONS_ROOT}; type=${typeof rawVal}`,'ok');
-      if (typeof rawVal !== 'object'){
-        log('Warning: /public/sessions is not an object. Check DB structure in console.','warn');
-      }
 
       const sessions=[];
       snap.forEach(ch=>{
@@ -523,12 +568,14 @@
       if (!sessions.length){
         statusEl.textContent='No child nodes under /public/sessions';
         log('Snapshot exists but contains no children. Check Firebase data browser.','warn');
+        routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes yet. Record a walk with the logger.</td></tr>';
         return;
       }
 
       sessions.sort((a,b)=> (b.started||0)-(a.started||0));
       log(`Found ${sessions.length} sessions: ${sessions.map(s=>s.id).join(', ')}`,'ok');
 
+      // Dropdown (unchanged)
       sessions.forEach((s,i)=>{
         const opt=document.createElement('option');
         const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
@@ -546,10 +593,55 @@
         sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
         statusEl.textContent='Pick a session and tap Listen';
       }
+
+      // NEW: fill route comparison table
+      routeTableBody.innerHTML = '';
+      sessions.forEach(s=>{
+        const tr=document.createElement('tr');
+        tr.className='clickable';
+        tr.addEventListener('click',()=>{
+          sessionSel.value = s.id;
+          listenSession(s.id);
+          window.scrollTo({top:0,behavior:'smooth'});
+        });
+
+        const tdLabel=document.createElement('td');
+        tdLabel.textContent = s.label;
+
+        const tdAvg=document.createElement('td');
+        tdAvg.className='num';
+        const avg = s.analysis && typeof s.analysis.avgComfort==='number'
+          ? s.analysis.avgComfort : null;
+        if (avg == null){
+          tdAvg.textContent = '—';
+          tdAvg.classList.add('hint');
+        } else {
+          tdAvg.textContent = avg.toFixed(1);
+          tdAvg.classList.add(avg>=70?'ok':avg>=50?'warn':'err');
+        }
+
+        const tdN=document.createElement('td');
+        tdN.className='num';
+        const n = s.analysis && typeof s.analysis.n === 'number' ? s.analysis.n : null;
+        tdN.textContent = n != null ? String(n) : '—';
+
+        const tdWhen=document.createElement('td');
+        tdWhen.textContent = s.started
+          ? new Date(s.started).toLocaleString()
+          : 'unknown';
+
+        tr.appendChild(tdLabel);
+        tr.appendChild(tdAvg);
+        tr.appendChild(tdN);
+        tr.appendChild(tdWhen);
+        routeTableBody.appendChild(tr);
+      });
+
     }catch(e){
       statusEl.textContent='Error loading sessions';
       log('Error loading sessions: '+e.message,'err');
       log('If message is PERMISSION_DENIED, check Firebase rules for /public/sessions .read.','err');
+      routeTableBody.innerHTML = '<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Error loading routes. See Log tab.</td></tr>';
     }
   }
 
