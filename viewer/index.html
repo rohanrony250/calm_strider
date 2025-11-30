@@ -11,7 +11,8 @@
     --accent:#5bc0ff; --ok:#6df0a8; --warn:#ffd580; --err:#ff8797;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   header{position:sticky;top:0;z-index:20;background:#111a2e;padding:10px 14px;
     box-shadow:0 2px 12px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center;justify-content:space-between}
   h1{font-size:17px;margin:0;font-weight:700}
@@ -21,7 +22,7 @@
   .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   select,button,input[type="range"]{
     appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
-    padding:8px 10px;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px}
+    padding:6px 10px;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px}
   button[disabled]{opacity:.6;cursor:not-allowed}
   .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
     border:1px solid var(--line);background:#0f1730;font-size:12px}
@@ -29,7 +30,7 @@
   .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
   .k{font-size:11px;color:var(--mut)}
   .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
-  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
+  .badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line)}
   .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
   #map{height:420px;border-radius:12px}
   canvas{background:#0f1730;border-radius:12px;border:1px solid var(--line)}
@@ -39,11 +40,21 @@
   .section{display:none}
   .section.active{display:block}
   .row{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
-  .log{max-height:220px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px}
+  .log{max-height:220px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px;font-size:12px}
   .hint{font-size:12px;color:var(--mut)}
   .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .right{margin-left:auto}
-  @media(max-width:1020px){ .row{grid-template-columns:1fr} .statgrid{grid-template-columns:repeat(3,1fr)} #map{height:360px} }
+  .weights{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .weights .pill{flex:1 1 180px}
+  .weights label{font-size:11px;white-space:nowrap}
+  .weights span.val{font-size:11px}
+  input[type="range"]{width:90px;background:transparent}
+  @media(max-width:1020px){
+    .row{grid-template-columns:1fr}
+    .statgrid{grid-template-columns:repeat(3,1fr)}
+    #map{height:360px}
+  }
 </style>
 </head>
 <body>
@@ -66,7 +77,10 @@
       <button id="stopBtn" disabled>Stop</button>
       <button id="recenterBtn" disabled>Recenter map</button>
       <span class="pill">Auto-follow <input id="followChk" type="checkbox" checked/></span>
-      <span class="pill">Accuracy max: <span id="accVal">150</span> m <input id="accRange" type="range" min="10" max="300" value="150" step="5" /></span>
+      <span class="pill">Accuracy max:
+        <span id="accVal">150</span> m
+        <input id="accRange" type="range" min="10" max="300" value="150" step="5" />
+      </span>
       <span id="status" class="hint right"></span>
     </div>
   </div>
@@ -84,6 +98,33 @@
       <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
       <div class="stat"><div class="k">Wind m/s · Rain mm/h</div><div class="v"><span id="wind">—</span> · <span id="rain">—</span></div></div>
     </div>
+
+    <!-- EXTRA TASK: user-tunable comfort weights -->
+    <div class="weights">
+      <span class="pill">
+        <label for="wRough">Roughness</label>
+        <input id="wRough" type="range" min="0" max="2" step="0.1" value="1">
+        <span class="val" id="wRoughVal">1.0</span>
+      </span>
+      <span class="pill">
+        <label for="wNoise">Noise</label>
+        <input id="wNoise" type="range" min="0" max="2" step="0.1" value="1">
+        <span class="val" id="wNoiseVal">1.0</span>
+      </span>
+      <span class="pill">
+        <label for="wRain">Rain</label>
+        <input id="wRain" type="range" min="0" max="2" step="0.1" value="1">
+        <span class="val" id="wRainVal">1.0</span>
+      </span>
+      <span class="pill">
+        <label for="wWind">Wind</label>
+        <input id="wWind" type="range" min="0" max="2" step="0.1" value="1">
+        <span class="val" id="wWindVal">1.0</span>
+      </span>
+    </div>
+    <div class="hint" style="margin-top:6px;">
+      Extra task: you can tune how strongly roughness, noise, rain and wind penalise the comfort score.
+    </div>
   </div>
 
   <div class="tabs">
@@ -98,6 +139,8 @@
       <div class="k">Last point</div><div class="v" id="lastPoint">—</div>
       <div style="height:10px"></div>
       <div class="k">Session meta</div><div class="v" id="sessMeta">—</div>
+      <div style="height:10px"></div>
+      <div class="k">Session analysis</div><div class="v" id="sessAnalysis">—</div>
       <div style="height:10px"></div>
       <div class="k">Skipped (accuracy)</div><div class="v" id="skipAcc">0</div>
       <div class="k">Skipped (invalid coords)</div><div class="v" id="skipBad">0</div>
@@ -122,7 +165,11 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
-  import { getDatabase, ref, child, get, query, orderByKey, limitToLast, onChildAdded, off } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
+  import {
+    getDatabase, ref, child, get,
+    query, orderByKey, limitToLast,
+    onChildAdded, off, set
+  } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyB0yzdcWJxsO3dtqWlTJyEjupV8_mdzm0E",
@@ -134,7 +181,7 @@
   const app = initializeApp(firebaseConfig);
   const db  = getDatabase(app);
 
-  // UI refs
+  // --- UI refs ---
   const sessionSel  = document.getElementById('sessionSel');
   const listenBtn   = document.getElementById('listenBtn');
   const stopBtn     = document.getElementById('stopBtn');
@@ -158,6 +205,7 @@
   const rainEl      = document.getElementById('rain');
   const lastPointEl = document.getElementById('lastPoint');
   const sessMetaEl  = document.getElementById('sessMeta');
+  const sessAnalysisEl = document.getElementById('sessAnalysis');
   const skipAccEl   = document.getElementById('skipAcc');
   const skipBadEl   = document.getElementById('skipBad');
   const logEl       = document.getElementById('log');
@@ -166,6 +214,16 @@
   const secMap   = document.getElementById('sec-map');
   const secCharts= document.getElementById('sec-charts');
   const secLog   = document.getElementById('sec-log');
+
+  // extra task – weight sliders
+  const wRoughInput = document.getElementById('wRough');
+  const wNoiseInput = document.getElementById('wNoise');
+  const wRainInput  = document.getElementById('wRain');
+  const wWindInput  = document.getElementById('wWind');
+  const wRoughVal   = document.getElementById('wRoughVal');
+  const wNoiseVal   = document.getElementById('wNoiseVal');
+  const wRainVal    = document.getElementById('wRainVal');
+  const wWindVal    = document.getElementById('wWindVal');
 
   // tabs
   tabs.forEach(t=>t.addEventListener('click', ()=>{
@@ -200,19 +258,25 @@
 
   function goodCoord(r){
     const lat=num(r.lat), lon=num(r.lon);
-    if(lat==null || lon==null || Math.abs(lat)>90 || Math.abs(lon)>180){ skippedBad++; skipBadEl.textContent=String(skippedBad); return null; }
+    if(lat==null || lon==null || Math.abs(lat)>90 || Math.abs(lon)>180){
+      skippedBad++; skipBadEl.textContent=String(skippedBad); return null;
+    }
     const acc=num(r.accuracy_m);
-    if(acc!=null && acc>ACCURACY_MAX){ skippedAcc++; skipAccEl.textContent=String(skippedAcc); return null; }
+    if(acc!=null && acc>ACCURACY_MAX){
+      skippedAcc++; skipAccEl.textContent=String(skippedAcc); return null;
+    }
     return [lat,lon];
   }
 
   // Charts
   const accelChart=new Chart(document.getElementById('chartAccel'),{
-    type:'line', data:{labels:[],datasets:[{label:'|a| m/s²',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
+    type:'line',
+    data:{labels:[],datasets:[{label:'|a| m/s²',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
     options:{animation:false,plugins:{legend:{display:false}},scales:{x:{display:false}}}
   });
   const noiseChart=new Chart(document.getElementById('chartNoise'),{
-    type:'line', data:{labels:[],datasets:[{label:'dBFS',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
+    type:'line',
+    data:{labels:[],datasets:[{label:'dBFS',data:[],tension:.2,borderWidth:2,pointRadius:0}]},
     options:{animation:false,plugins:{legend:{display:false}},scales:{x:{display:false}}}
   });
   function pushChart(chart,label,val){
@@ -221,6 +285,21 @@
     if(d.labels.length>800){ d.labels.shift(); d.datasets[0].data.shift(); }
     chart.update('none');
   }
+
+  // Comfort weights (extra task)
+  const weights = { rough:1.0, noise:1.0, rain:1.0, wind:1.0 };
+  function syncWeights(){
+    weights.rough = parseFloat(wRoughInput.value);
+    weights.noise = parseFloat(wNoiseInput.value);
+    weights.rain  = parseFloat(wRainInput.value);
+    weights.wind  = parseFloat(wWindInput.value);
+    wRoughVal.textContent = weights.rough.toFixed(1);
+    wNoiseVal.textContent = weights.noise.toFixed(1);
+    wRainVal.textContent  = weights.rain.toFixed(1);
+    wWindVal.textContent  = weights.wind.toFixed(1);
+  }
+  [wRoughInput,wNoiseInput,wRainInput,wWindInput].forEach(inp=>inp.addEventListener('input', syncWeights));
+  syncWeights();
 
   // Comfort
   let lastAmagVals=[];
@@ -232,13 +311,79 @@
     return Math.sqrt(v);
   }
   function comfortParts(aStd,dbfs,precip,wind){
-    const pRough=clamp((aStd||0)*12,0,40);
+    const pRoughBase = clamp((aStd||0)*12,0,40);
     const baseDb=(dbfs!=null?dbfs:-50);
-    const pNoise=clamp((baseDb+60)*0.8,0,25);
-    const pRain =clamp((precip||0)*10,0,20);
-    const pWind =clamp((wind||0)*2,0,15);
-    const score =clamp(Math.round(100-pRough-pNoise-pRain-pWind),0,100);
-    return {score,pRough,pNoise,pRain,pWind};
+    const pNoiseBase = clamp((baseDb+60)*0.8,0,25);
+    const pRainBase  = clamp((precip||0)*10,0,20);
+    const pWindBase  = clamp((wind||0)*2,0,15);
+
+    const pRough = pRoughBase * weights.rough;
+    const pNoise = pNoiseBase * weights.noise;
+    const pRain  = pRainBase  * weights.rain;
+    const pWind  = pWindBase  * weights.wind;
+
+    const score = clamp(Math.round(100-pRough-pNoise-pRain-pWind),0,100);
+    return {score,pRough,pNoise,pRain,pWind,pRoughBase,pNoiseBase,pRainBase,pWindBase};
+  }
+
+  // Analysis stats → stored back to Firebase
+  let currentSessionId=null;
+  let stats=null;
+  let lastSummaryWrite=0;
+  const SUMMARY_MIN_INTERVAL=5000; // ms
+
+  async function writeSummary(){
+    if (!currentSessionId || !stats) return;
+    const avgComfort = stats.n ? (stats.sumComfort / stats.n) : null;
+    const pGood = stats.n ? (stats.nGood*100/stats.n).toFixed(1) : '0.0';
+    const pOk   = stats.n ? (stats.nOk*100/stats.n).toFixed(1)   : '0.0';
+    const pLow  = stats.n ? (stats.nLow*100/stats.n).toFixed(1)  : '0.0';
+
+    const doc = {
+      n: stats.n,
+      avgComfort: avgComfort,
+      nGood: stats.nGood,
+      nOk: stats.nOk,
+      nLow: stats.nLow,
+      maxRoughPenalty: stats.maxRoughPenalty,
+      maxNoisePenalty: stats.maxNoisePenalty,
+      maxRainPenalty: stats.maxRainPenalty,
+      maxWindPenalty: stats.maxWindPenalty,
+      firstTs: stats.firstTs,
+      lastTs: stats.lastTs,
+      weights: {...weights},
+      updatedAt: Date.now()
+    };
+    await set(ref(db, `public/sessions/${currentSessionId}/analysis`), doc);
+
+    // Update UI summary
+    sessAnalysisEl.textContent = avgComfort!=null
+      ? `avg ${avgComfort.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`
+      : '—';
+  }
+
+  function updateStats(row, parts){
+    if (!stats || !currentSessionId) return;
+    stats.n++;
+    stats.sumComfort += parts.score;
+    if (parts.score>=70) stats.nGood++;
+    else if (parts.score>=50) stats.nOk++;
+    else stats.nLow++;
+
+    stats.maxRoughPenalty = Math.max(stats.maxRoughPenalty, parts.pRough);
+    stats.maxNoisePenalty = Math.max(stats.maxNoisePenalty, parts.pNoise);
+    stats.maxRainPenalty  = Math.max(stats.maxRainPenalty,  parts.pRain);
+    stats.maxWindPenalty  = Math.max(stats.maxWindPenalty,  parts.pWind);
+
+    const t = row.timestamp_ms ? +row.timestamp_ms : Date.now();
+    if (stats.firstTs == null) stats.firstTs = t;
+    stats.lastTs = t;
+
+    const now = Date.now();
+    if (now - lastSummaryWrite > SUMMARY_MIN_INTERVAL){
+      lastSummaryWrite = now;
+      writeSummary().catch(e=>log('summary error: '+e.message,'err'));
+    }
   }
 
   // feedRow from Firebase
@@ -254,6 +399,7 @@
     if(wMps!=null) windEl.textContent=wMps.toFixed(1);
     if(rain!=null) rainEl.textContent=rain.toFixed(2);
 
+    // comfort analysis from fused data (sensor + weather)
     const std=rollStdPush(lastAmagVals,aTot,20);
     const parts=comfortParts(std,db,rain,wMps);
     comfortEl.textContent=parts.score;
@@ -261,11 +407,24 @@
     comfortBadge.className='badge ' + (parts.score>=70?'ok':parts.score>=50?'warn':'err');
     comfortBreak.textContent=`penalties: rough ${parts.pRough.toFixed(1)}, noise ${parts.pNoise.toFixed(1)}, rain ${parts.pRain.toFixed(1)}, wind ${parts.pWind.toFixed(1)}`;
 
+    // "actuation": marker colour follows comfort (green/amber/red)
+    const col = parts.score>=70 ? '#1abc9c' : parts.score>=50 ? '#f1c40f' : '#e74c3c';
+    marker.setStyle({fillColor:col, color:'#fff'});
+
+    // analysis stats → cloud
+    updateStats(r, parts);
+
     const latlng=goodCoord(r);
     if(latlng){
       lastLatLng=latlng; track.addLatLng(latlng); marker.setLatLng(latlng);
-      if(!gotFirstFix){ gotFirstFix=true; map.setView(latlng,16); recenterBtn.disabled=true; log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`,'ok'); }
-      else if(AUTO_FOLLOW){ map.panTo(latlng,{animate:false}); }
+      if(!gotFirstFix){
+        gotFirstFix=true;
+        map.setView(latlng,16);
+        recenterBtn.disabled=true;
+        log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`,'ok');
+      } else if(AUTO_FOLLOW){
+        map.panTo(latlng,{animate:false});
+      }
       lastPointEl.textContent=`${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)} (acc≤${ACCURACY_MAX}m)`;
     }else{
       const lat=r.lat ?? 'null', lon=r.lon ?? 'null', acc=r.accuracy_m ?? 'null';
@@ -312,13 +471,28 @@
 
   async function listenSession(sessionId){
     if(detach){ detach(); detach=null; }
+    currentSessionId = sessionId;
+
     // reset visuals
     track.remove(); marker.remove();
     track=L.polyline([], {color:'#5bc0ff',weight:4,opacity:.95}).addTo(map);
     marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
-    gotFirstFix=false; lastLatLng=null; skippedAcc=0; skippedBad=0; skipAccEl.textContent='0'; skipBadEl.textContent='0';
+    gotFirstFix=false; lastLatLng=null; skippedAcc=0; skippedBad=0;
+    skipAccEl.textContent='0'; skipBadEl.textContent='0';
     sCountEl.textContent='0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
-    lastAmagVals.length=0;
+    lastAmagVals.length=0; sessAnalysisEl.textContent='—';
+
+    stats = {
+      n:0, sumComfort:0,
+      nGood:0, nOk:0, nLow:0,
+      maxRoughPenalty:0,
+      maxNoisePenalty:0,
+      maxRainPenalty:0,
+      maxWindPenalty:0,
+      firstTs:null,
+      lastTs:null
+    };
+    lastSummaryWrite=0;
 
     const path=`public/sessions/${sessionId}/readings`;
     const q=query(ref(db,path),orderByKey(),limitToLast(800));
@@ -333,11 +507,25 @@
 
     const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
     if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
+
+    // try to load existing analysis (if any)
+    const anaSnap=await get(child(ref(db),`public/sessions/${sessionId}/analysis`));
+    if(anaSnap.exists()){
+      const a=anaSnap.val();
+      const n=a.n||0, avg=a.avgComfort!=null ? a.avgComfort : null;
+      const pGood=n ? (a.nGood*100/n).toFixed(1) : '0.0';
+      const pOk  =n ? (a.nOk*100/n).toFixed(1)   : '0.0';
+      const pLow =n ? (a.nLow*100/n).toFixed(1)  : '0.0';
+      if(avg!=null){
+        sessAnalysisEl.textContent=`avg ${avg.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`;
+      }
+    }
   }
 
   function stopListening(){
     if(detach){ detach(); detach=null; log('Stopped listening','warn'); }
-    stopBtn.disabled=true; listenBtn.disabled=false; sessionSel.disabled=false; statusEl.textContent='';
+    stopBtn.disabled=true; listenBtn.disabled=false; sessionSel.disabled=false;
+    statusEl.textContent='';
   }
 
   // wire up
@@ -348,7 +536,8 @@
     const sid=sessionSel.value;
     if(!sid){ log('No session selected','warn'); return; }
     const url=`${location.origin}${location.pathname}?session=${encodeURIComponent(sid)}`;
-    try{ await navigator.clipboard.writeText(url); log('Share link copied: '+url,'ok'); }catch(e){ log('Copy failed; URL: '+url,'warn'); alert(url); }
+    try{ await navigator.clipboard.writeText(url); log('Share link copied: '+url,'ok'); }
+    catch(e){ log('Copy failed; URL: '+url,'warn'); alert(url); }
   });
 
   accVal.textContent=accRange.value;
