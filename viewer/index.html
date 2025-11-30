@@ -11,37 +11,67 @@
     --accent:#5bc0ff; --ok:#6df0a8; --warn:#ffd580; --err:#ff8797;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-    font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  header{position:sticky;top:0;z-index:20;background:#111a2e;padding:10px 14px;
-    box-shadow:0 2px 12px rgba(0,0,0,.35);display:flex;gap:10px;align-items:center;justify-content:space-between}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  header{
+    position:sticky;top:0;z-index:20;
+    background:#111a2e;padding:10px 14px;
+    box-shadow:0 2px 12px rgba(0,0,0,.35);
+    display:flex;gap:10px;align-items:center;justify-content:space-between;
+  }
   h1{font-size:17px;margin:0;font-weight:700}
   .sub{font-size:12px;color:var(--mut)}
   main{max-width:1200px;margin:0 auto;padding:14px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:14px}
+  .card{
+    background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:12px;margin-bottom:14px;
+  }
   .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   select,button,input[type="range"]{
     appearance:none;background:#1a2550;border:1px solid #2b3c67;color:var(--ink);
-    padding:6px 10px;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px}
+    padding:6px 10px;border-radius:10px;font-weight:600;cursor:pointer;font-size:13px;
+  }
   button[disabled]{opacity:.6;cursor:not-allowed}
-  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
-    border:1px solid var(--line);background:#0f1730;font-size:12px}
-  .statgrid{display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px}
-  .stat{background:#0f1730;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:6px 10px;border-radius:999px;
+    border:1px solid var(--line);background:#0f1730;font-size:12px;
+  }
+  .statgrid{
+    display:grid;grid-template-columns:repeat(7,minmax(110px,1fr));gap:10px;
+  }
+  .stat{
+    background:#0f1730;border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;
+  }
   .k{font-size:11px;color:var(--mut)}
   .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px}
-  .badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--line)}
+  .badge{
+    display:inline-block;font-size:11px;
+    padding:1px 8px;border-radius:999px;border:1px solid var(--line);
+  }
   .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
   #map{height:420px;border-radius:12px}
-  canvas{background:#0f1730;border-radius:12px;border:1px solid var(--line)}
+  canvas{
+    background:#0f1730;border-radius:12px;border:1px solid var(--line);
+  }
   .tabs{display:flex;gap:8px;margin:10px 0}
-  .tab{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#0f1730;cursor:pointer;font-weight:600}
+  .tab{
+    padding:8px 12px;border:1px solid var(--line);
+    border-radius:10px;background:#0f1730;cursor:pointer;font-weight:600;
+  }
   .tab.active{outline:2px solid #2b3c67}
   .section{display:none}
   .section.active{display:block}
   .row{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
-  .log{max-height:220px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    background:#0f1730;border:1px solid var(--line);border-radius:12px;padding:8px;font-size:12px}
+  .log{
+    max-height:220px;overflow:auto;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background:#0f1730;border:1px solid var(--line);
+    border-radius:12px;padding:8px;font-size:12px;
+  }
   .hint{font-size:12px;color:var(--mut)}
   .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .right{margin-left:auto}
@@ -61,7 +91,7 @@
 <header>
   <div>
     <h1>📊 Calm Strider — Viewer</h1>
-    <div class="sub">Compare walking routes by comfort: map, charts, and weather-aware scores</div>
+    <div class="sub">Inspect logged walks: map, charts, and comfort score from Firebase</div>
   </div>
   <div class="flex">
     <button id="shareBtn">Share</button>
@@ -73,7 +103,7 @@
     <div class="controls">
       <strong>Session:</strong>
       <select id="sessionSel"></select>
-      <button id="listenBtn">Listen live</button>
+      <button id="listenBtn">Listen</button>
       <button id="stopBtn" disabled>Stop</button>
       <button id="recenterBtn" disabled>Recenter map</button>
       <span class="pill">Auto-follow <input id="followChk" type="checkbox" checked/></span>
@@ -88,18 +118,29 @@
   <div class="card">
     <div class="statgrid">
       <div class="stat"><div class="k">Samples</div><div class="v" id="sCount">0</div></div>
-      <div class="stat"><div class="k">Comfort</div>
-        <div class="v"><span id="comfort">—</span> <span id="comfortBadge" class="badge">—</span></div>
+      <div class="stat">
+        <div class="k">Comfort</div>
+        <div class="v">
+          <span id="comfort">—</span>
+          <span id="comfortBadge" class="badge">—</span>
+        </div>
         <div class="hint" id="comfortBreak"></div>
       </div>
       <div class="stat"><div class="k">Speed m/s</div><div class="v" id="spd">—</div></div>
       <div class="stat"><div class="k">Accel |a|</div><div class="v" id="amag">—</div></div>
-      <div class="stat"><div class="k">Noise dBFS</div><div class="v" id="noise">—</div><div class="hint" id="noiseHint"></div></div>
+      <div class="stat">
+        <div class="k">Noise dBFS</div>
+        <div class="v" id="noise">—</div>
+        <div class="hint" id="noiseHint"></div>
+      </div>
       <div class="stat"><div class="k">Temp °C</div><div class="v" id="temp">—</div></div>
-      <div class="stat"><div class="k">Wind m/s · Rain mm/h</div><div class="v"><span id="wind">—</span> · <span id="rain">—</span></div></div>
+      <div class="stat">
+        <div class="k">Wind m/s · Rain mm/h</div>
+        <div class="v"><span id="wind">—</span> · <span id="rain">—</span></div>
+      </div>
     </div>
 
-    <!-- EXTRA TASK: user-tunable comfort weights -->
+    <!-- Extra task: weight sliders kept (but simple) -->
     <div class="weights">
       <span class="pill">
         <label for="wRough">Roughness</label>
@@ -123,30 +164,8 @@
       </span>
     </div>
     <div class="hint" style="margin-top:6px;">
-      Extra task: tune how strongly roughness, noise, rain and wind penalise the comfort score.
+      Comfort = 100 – weighted penalties for roughness, noise, rain, and wind.
     </div>
-  </div>
-
-  <!-- NEW: Route comparison table -->
-  <div class="card">
-    <div class="k">Route comparison</div>
-    <div class="hint">
-      Each row is one recorded walk (session). Routes are sorted by average comfort, using analysis stored in Firebase.
-      Click a row to open it.
-    </div>
-    <table style="width:100%;margin-top:6px;border-collapse:collapse;font-size:12px;">
-      <thead>
-        <tr>
-          <th style="text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);">Route</th>
-          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Avg comfort</th>
-          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Good / OK / Low</th>
-          <th style="text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);">Samples</th>
-        </tr>
-      </thead>
-      <tbody id="routeTableBody">
-        <tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>
-      </tbody>
-    </table>
   </div>
 
   <div class="tabs">
@@ -189,7 +208,6 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
   import {
     getDatabase, ref, child, get,
-    query, orderByKey, limitToLast,
     onChildAdded, off, set
   } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-database.js";
 
@@ -213,7 +231,6 @@
   const accVal      = document.getElementById('accVal');
   const statusEl    = document.getElementById('status');
   const shareBtn    = document.getElementById('shareBtn');
-  const routeTableBody = document.getElementById('routeTableBody');
 
   const sCountEl    = document.getElementById('sCount');
   const comfortEl   = document.getElementById('comfort');
@@ -238,7 +255,7 @@
   const secCharts= document.getElementById('sec-charts');
   const secLog   = document.getElementById('sec-log');
 
-  // extra task – weight sliders
+  // weight sliders
   const wRoughInput = document.getElementById('wRough');
   const wNoiseInput = document.getElementById('wNoise');
   const wRainInput  = document.getElementById('wRain');
@@ -263,20 +280,26 @@
     line.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
     if(cls) line.className=cls;
     logEl.appendChild(line); logEl.scrollTop=logEl.scrollHeight;
+    console.log('[viewer]', msg);
   };
   const num = v => (v===null||v===undefined||v==='') ? null : (Number.isFinite(+v)? +v : null);
   const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
 
   // Map
   const map = L.map('map',{ zoomControl:true }).setView([53.3498,-6.2603],13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© OpenStreetMap'
+  }).addTo(map);
   let track=L.polyline([], {color:'#5bc0ff',weight:4,opacity:.95}).addTo(map);
   let marker=L.circleMarker([0,0], {radius:6,color:'#fff',weight:2,fillColor:'#1abc9c',fillOpacity:0.9}).addTo(map);
   let gotFirstFix=false, lastLatLng=null, AUTO_FOLLOW=true;
   let ACCURACY_MAX=parseInt(accRange.value,10);
   let skippedAcc=0, skippedBad=0;
 
-  accRange.addEventListener('input',()=>{ ACCURACY_MAX=parseInt(accRange.value,10); accVal.textContent=ACCURACY_MAX; });
+  accRange.addEventListener('input',()=>{
+    ACCURACY_MAX=parseInt(accRange.value,10);
+    accVal.textContent=ACCURACY_MAX;
+  });
   followChk.addEventListener('change',()=>{ AUTO_FOLLOW=followChk.checked; });
 
   function goodCoord(r){
@@ -309,7 +332,7 @@
     chart.update('none');
   }
 
-  // Comfort weights (extra task)
+  // Comfort weights
   const weights = { rough:1.0, noise:1.0, rain:1.0, wind:1.0 };
   function syncWeights(){
     weights.rough = parseFloat(wRoughInput.value);
@@ -324,7 +347,7 @@
   [wRoughInput,wNoiseInput,wRainInput,wWindInput].forEach(inp=>inp.addEventListener('input', syncWeights));
   syncWeights();
 
-  // Comfort
+  // Comfort scoring
   let lastAmagVals=[];
   function rollStdPush(arr,val,win=20){
     if(val==null) return 0;
@@ -349,7 +372,7 @@
     return {score,pRough,pNoise,pRain,pWind};
   }
 
-  // Analysis stats → stored back to Firebase
+  // Stats / summary (still written to Firebase)
   let currentSessionId=null;
   let stats=null;
   let lastSummaryWrite=0;
@@ -377,7 +400,11 @@
       weights: {...weights},
       updatedAt: Date.now()
     };
-    await set(ref(db, `public/sessions/${currentSessionId}/analysis`), doc);
+    try{
+      await set(ref(db, `public/sessions/${currentSessionId}/analysis`), doc);
+    }catch(e){
+      log('summary write error: '+e.message,'err');
+    }
 
     sessAnalysisEl.textContent = avgComfort!=null
       ? `avg ${avgComfort.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`
@@ -404,11 +431,11 @@
     const now = Date.now();
     if (now - lastSummaryWrite > SUMMARY_MIN_INTERVAL){
       lastSummaryWrite = now;
-      writeSummary().catch(e=>log('summary error: '+e.message,'err'));
+      writeSummary();
     }
   }
 
-  // feedRow from Firebase
+  // Feed each reading row
   function feedRow(r){
     const aTot=num(r.a_total), db=num(r.db_smooth!=null?r.db_smooth:r.dbfs);
     const spd=num(r.speed_mps), tC=num(r.w_temp_c), wMps=num(r.w_wind_mps), rain=num(r.w_precip_mm);
@@ -439,7 +466,7 @@
       if(!gotFirstFix){
         gotFirstFix=true;
         map.setView(latlng,16);
-        recenterBtn.disabled=true;
+        recenterBtn.disabled=false;
         log(`map centered @ ${latlng[0].toFixed(5)}, ${latlng[1].toFixed(5)}`,'ok');
       } else if(AUTO_FOLLOW){
         map.panTo(latlng,{animate:false});
@@ -458,134 +485,58 @@
 
   // Firebase listening
   let detach=null;
+
   async function loadSessions(){
     sessionSel.innerHTML='';
-    routeTableBody.innerHTML='<tr><td colspan="4" style="padding:4px 6px;color:var(--mut);">Loading…</td></tr>';
+    statusEl.textContent='Loading sessions…';
+    log('Loading sessions from /public/sessions');
 
-    const snap=await get(query(ref(db,'public/sessions'),orderByKey(),limitToLast(40)));
-    const sessions=[];
-    snap.forEach(ch=>{
-      const id=ch.key;
-      const val=ch.val() || {};
-      const meta=val.meta || {};
-      const analysis=val.analysis || null;
-      const started=meta.startedAt || 0;
-      sessions.push({id,started,meta,analysis});
-    });
-    sessions.sort((a,b)=>b.started-a.started);
-
-    // dropdown options
-    sessions.forEach((s,i)=>{
-      const opt=document.createElement('option');
-      const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
-      const label = s.meta.routeLabel || `Walk ${dt}`;
-      if (s.analysis && typeof s.analysis.avgComfort==='number'){
-        opt.textContent = `${label} — avg ${s.analysis.avgComfort.toFixed(1)} · ${dt}`;
-      } else {
-        opt.textContent = `${label} · ${dt}`;
+    try{
+      const snap = await get(ref(db, 'public/sessions'));
+      if (!snap.exists()){
+        statusEl.textContent='No sessions found under /public/sessions';
+        log('No sessions found. Is the logger writing to public/sessions/?','warn');
+        return;
       }
-      opt.value=s.id;
-      if(i===0) opt.selected=true;
-      sessionSel.appendChild(opt);
-    });
 
-    if(sessions.length){
-      sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
-      statusEl.textContent='Pick a session and tap Listen';
-    }else{
-      statusEl.textContent='No sessions found';
-    }
-
-    // route comparison table
-    routeTableBody.innerHTML='';
-    if(!sessions.length){
-      const tr=document.createElement('tr');
-      tr.innerHTML='<td colspan="4" style="padding:4px 6px;color:var(--mut);">No routes found yet. Record a walk with the logger.</td>';
-      routeTableBody.appendChild(tr);
-      return;
-    }
-
-    const summaries = sessions.map(s=>{
-      const a=s.analysis;
-      const n=a?.n ?? null;
-      const avg=(a && typeof a.avgComfort==='number') ? a.avgComfort : null;
-      const nGood=a?.nGood ?? 0;
-      const nOk=a?.nOk ?? 0;
-      const nLow=a?.nLow ?? 0;
-      const label=s.meta.routeLabel || (s.started? `Walk ${new Date(s.started).toISOString().replace('T',' ').slice(0,16)}` : s.id);
-      return {id:s.id,label,started:s.started,avg,n,nGood,nOk,nLow};
-    });
-
-    summaries.sort((a,b)=>{
-      if(a.avg==null && b.avg==null) return b.started-a.started;
-      if(a.avg==null) return 1;
-      if(b.avg==null) return -1;
-      return b.avg-a.avg;
-    });
-
-    summaries.forEach(sum=>{
-      const tr=document.createElement('tr');
-      tr.style.cursor='pointer';
-      tr.addEventListener('click',()=>{
-        sessionSel.value=sum.id;
-        listenSession(sum.id);
-        window.scrollTo({top:0,behavior:'smooth'});
+      const sessions=[];
+      snap.forEach(ch=>{
+        const id=ch.key;
+        const val=ch.val() || {};
+        const meta=val.meta || {};
+        const analysis=val.analysis || null;
+        const started=meta.startedAt || 0;
+        sessions.push({id,started,meta,analysis});
       });
 
-      const tdRoute=document.createElement('td');
-      tdRoute.style.padding='4px 6px';
-      tdRoute.style.borderBottom='1px solid var(--line)';
-      tdRoute.textContent=sum.label;
+      sessions.sort((a,b)=>b.started-a.started);
+      log(`Found ${sessions.length} sessions.`,'ok');
 
-      const tdAvg=document.createElement('td');
-      tdAvg.style.padding='4px 6px';
-      tdAvg.style.textAlign='right';
-      tdAvg.style.borderBottom='1px solid var(--line)';
-      if(sum.avg==null){
-        tdAvg.textContent='—';
-        tdAvg.className='hint';
-      }else{
-        tdAvg.textContent=sum.avg.toFixed(1);
-        tdAvg.className = sum.avg>=70?'ok':sum.avg>=50?'warn':'err';
+      sessions.forEach((s,i)=>{
+        const opt=document.createElement('option');
+        const dt=s.started? new Date(s.started).toISOString().replace('T',' ').slice(0,19):'unknown';
+        const label = s.meta.routeLabel || `Walk ${dt}`;
+        if (s.analysis && typeof s.analysis.avgComfort==='number'){
+          opt.textContent = `${label} — avg ${s.analysis.avgComfort.toFixed(1)} · ${dt}`;
+        } else {
+          opt.textContent = `${label} · ${dt}`;
+        }
+        opt.value=s.id;
+        if(i===0) opt.selected=true;
+        sessionSel.appendChild(opt);
+      });
+
+      if(sessions.length){
+        sessMetaEl.textContent=JSON.stringify(sessions[0].meta||{},null,0);
+        statusEl.textContent='Pick a session and tap Listen';
       }
-
-      const tdDist=document.createElement('td');
-      tdDist.style.padding='4px 6px';
-      tdDist.style.textAlign='right';
-      tdDist.style.borderBottom='1px solid var(--line)';
-      if(sum.n && sum.avg!=null){
-        const pG=(sum.nGood*100/sum.n).toFixed(0);
-        const pO=(sum.nOk*100/sum.n).toFixed(0);
-        const pL=(sum.nLow*100/sum.n).toFixed(0);
-        tdDist.textContent=`${pG}% / ${pO}% / ${pL}%`;
-      }else{
-        tdDist.textContent='—';
-        tdDist.className='hint';
-      }
-
-      const tdN=document.createElement('td');
-      tdN.style.padding='4px 6px';
-      tdN.style.textAlign='right';
-      tdN.style.borderBottom='1px solid var(--line)';
-      tdN.textContent = sum.n!=null ? String(sum.n) : '—';
-
-      tr.appendChild(tdRoute);
-      tr.appendChild(tdAvg);
-      tr.appendChild(tdDist);
-      tr.appendChild(tdN);
-      routeTableBody.appendChild(tr);
-    });
-
-    // deep link
-    const sid=new URLSearchParams(location.search).get('session');
-    if(sid){
-      const opt=[...sessionSel.options].find(o=>o.value===sid);
-      if(opt){ sessionSel.value=sid; listenSession(sid); }
+    }catch(e){
+      statusEl.textContent='Error loading sessions';
+      log('Error loading sessions: '+e.message,'err');
+      log('If message is PERMISSION_DENIED, check Firebase rules for /public/sessions .read.','err');
     }
   }
 
-  // listening
-  let detach=null;
   async function listenSession(sessionId){
     if(detach){ detach(); detach=null; }
     currentSessionId = sessionId;
@@ -597,6 +548,7 @@
     skipAccEl.textContent='0'; skipBadEl.textContent='0';
     sCountEl.textContent='0'; comfortEl.textContent='—'; comfortBadge.textContent='—'; comfortBadge.className='badge';
     lastAmagVals.length=0; sessAnalysisEl.textContent='—';
+    recenterBtn.disabled=true;
 
     stats = {
       n:0, sumComfort:0,
@@ -611,29 +563,37 @@
     lastSummaryWrite=0;
 
     const path=`public/sessions/${sessionId}/readings`;
-    const q=query(ref(db,path),orderByKey(),limitToLast(800));
+    const readingsRef = ref(db, path);
     const handler=snap=>feedRow(snap.val());
-    onChildAdded(q,handler);
-    detach=()=> off(q,'child_added',handler);
+    onChildAdded(readingsRef,handler);
+    detach=()=> off(readingsRef,'child_added',handler);
 
     statusEl.textContent=`Listening: ${sessionId}`;
     stopBtn.disabled=false; listenBtn.disabled=true; sessionSel.disabled=true;
     setTimeout(()=>map.invalidateSize(),120);
     log(`Listening to /${path}`,'ok');
 
-    const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
-    if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
+    try{
+      const metaSnap=await get(child(ref(db),`public/sessions/${sessionId}/meta`));
+      if(metaSnap.exists()) sessMetaEl.textContent=JSON.stringify(metaSnap.val(),null,0);
+    }catch(e){
+      log('meta load error: '+e.message,'err');
+    }
 
-    const anaSnap=await get(child(ref(db),`public/sessions/${sessionId}/analysis`));
-    if(anaSnap.exists()){
-      const a=anaSnap.val();
-      const n=a.n||0, avg=a.avgComfort!=null ? a.avgComfort : null;
-      const pGood=n ? (a.nGood*100/n).toFixed(1) : '0.0';
-      const pOk  =n ? (a.nOk*100/n).toFixed(1)   : '0.0';
-      const pLow =n ? (a.nLow*100/n).toFixed(1)  : '0.0';
-      if(avg!=null){
-        sessAnalysisEl.textContent=`avg ${avg.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`;
+    try{
+      const anaSnap=await get(child(ref(db),`public/sessions/${sessionId}/analysis`));
+      if(anaSnap.exists()){
+        const a=anaSnap.val();
+        const n=a.n||0, avg=a.avgComfort!=null ? a.avgComfort : null;
+        const pGood=n ? (a.nGood*100/n).toFixed(1) : '0.0';
+        const pOk  =n ? (a.nOk*100/n).toFixed(1)   : '0.0';
+        const pLow =n ? (a.nLow*100/n).toFixed(1)  : '0.0';
+        if(avg!=null){
+          sessAnalysisEl.textContent=`avg ${avg.toFixed(1)} · good ${pGood}% · ok ${pOk}% · low ${pLow}%`;
+        }
       }
+    }catch(e){
+      log('analysis load error: '+e.message,'err');
     }
   }
 
@@ -643,7 +603,7 @@
     statusEl.textContent='';
   }
 
-  // share
+  // share link
   shareBtn.addEventListener('click',async()=>{
     const sid=sessionSel.value;
     if(!sid){ log('No session selected','warn'); return; }
@@ -657,7 +617,7 @@
   recenterBtn.addEventListener('click',()=>{ if(lastLatLng){ map.setView(lastLatLng,16); map.invalidateSize(); }});
 
   accVal.textContent=accRange.value;
-  loadSessions().catch(e=>log('Error loading sessions: '+e.message,'err'));
+  loadSessions();
 </script>
 </body>
 </html>
